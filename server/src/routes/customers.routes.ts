@@ -13,10 +13,8 @@ customersRouter.get("/", async (req, res) => {
   const customers = await prisma.customer.findMany({
     where: search
       ? {
-          OR: [
-            { name: { contains: search, mode: "insensitive" } },
-            { phone: { contains: search, mode: "insensitive" } },
-          ],
+          // La colación por defecto de MySQL (utf8mb4_*_ci) ya compara sin distinguir mayúsculas/minúsculas.
+          OR: [{ name: { contains: search } }, { phone: { contains: search } }],
         }
       : undefined,
     orderBy: { name: "asc" },
