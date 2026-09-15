@@ -47,6 +47,22 @@ npm run dev              # http://localhost:5173 (proxy a la API en :4000)
 
 Para instalar como app en el celular: abrir la web en Chrome/Safari móvil y usar "Agregar a pantalla de inicio" (ya incluye manifest e íconos).
 
+## Publicarlo en internet (para probarlo en la web, gratis)
+
+El backend sirve también la web (un solo servicio), así que solo hace falta desplegar `server/` con una base de datos PostgreSQL. Pasos con servicios gratuitos:
+
+1. **Base de datos** — crea una cuenta gratis en [neon.tech](https://neon.tech) (o Supabase), crea un proyecto y copia la cadena de conexión `postgresql://...` que te da.
+2. **Hosting** — crea una cuenta gratis en [render.com](https://render.com) con tu GitHub.
+3. En Render: **New +** → **Blueprint** → selecciona el repo `CFloral` (rama `claude/floreria-management-app-4juuyg` o la que hayas mergeado a main). Render detecta el archivo `render.yaml` de la raíz y prepara el servicio automáticamente.
+4. Cuando te pida las variables de entorno, pega en `DATABASE_URL` la cadena de conexión de Neon. `JWT_SECRET` se genera solo.
+5. Click en **Apply/Deploy** y espera 2-3 minutos. Render te da una URL pública como `https://cfloral.onrender.com` — ábrela en cualquier navegador o celular.
+6. La primera vez que arranca, si la base está vacía crea automáticamente las 3 tiendas y el usuario `admin@cfloral.com` / `admin123` para que puedas entrar de inmediato.
+
+**Importante:**
+- El plan gratis de Render "duerme" el servicio tras ~15 min sin uso; la primera visita después de eso tarda unos 30-50 segundos en despertar.
+- Cambia la contraseña del admin (o crea un usuario nuevo y elimina el demo) en cuanto empieces a meter datos reales, porque la URL es pública aunque no esté anunciada.
+- Cada vez que hagas `git push` a la rama conectada, Render vuelve a desplegar solo.
+
 ## Roadmap sugerido
 
 1. **Ahora (MVP):** clientes, inventario por tienda, pedidos con factura interna. ✅
