@@ -62,31 +62,101 @@ npm run dev              # http://localhost:5173 (proxy a la API en :4000)
 
 Para instalar como app en el celular: abrir la web en Chrome/Safari móvil y usar "Agregar a pantalla de inicio" (ya incluye manifest e íconos).
 
-## Instalarlo en un servidor propio (on-premise)
+## Instalarlo en el servidor Windows
 
-El backend sirve también la web ya construida (un solo proceso, un solo puerto), así que en el servidor solo hace falta:
+El backend sirve también la web ya construida (un solo proceso, un solo puerto). Como el servidor ya tiene MySQL instalado, solo falta lo siguiente (todo en PowerShell o CMD, como Administrador):
 
-1. **Instalar** Node.js 18+ y MySQL 8+ en el servidor (o usar el MySQL que ya tengan).
-2. **Copiar el código** al servidor (`git clone` del repo, o subir el `.zip`) y crear la base de datos como se indica arriba.
-3. **Compilar** el backend y el frontend:
-   ```bash
-   cd server && npm install && npx prisma migrate deploy && npm run build
-   cd ../client && npm install && npm run build
+### 1. Instalar Node.js
+
+Descarga el instalador **LTS** desde [nodejs.org](https://nodejs.org) y ejecútalo (siguiente, siguiente...), o si tienen `winget`:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+Verifica: `node -v` y `npm -v` en una terminal nueva.
+
+### 2. Crear la base de datos en el MySQL que ya tienen
+
+Abre **MySQL Command Line Client** (o `mysql -u root -p` desde cmd si `mysql` está en el PATH) y ejecuta:
+
+```sql
+CREATE DATABASE cfloral CHARACTER SET utf8mb4;
+CREATE USER 'cfloral'@'localhost' IDENTIFIED BY 'cfloral_dev';
+GRANT ALL PRIVILEGES ON cfloral.* TO 'cfloral'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+(Cambia `cfloral_dev` por una contraseña propia si quieres.)
+
+### 3. Copiar el código al servidor
+
+Si tienen Git instalado: `git clone https://github.com/antjimenez08/CFloral.git`. Si no, descargan el `.zip` desde GitHub (botón verde **Code → Download ZIP**) y lo descomprimen, por ejemplo en `C:\CFloral`.
+
+### 4. Configurar y compilar
+
+```powershell
+cd C:\CFloral\server
+copy .env.example .env
+notepad .env
+```
+
+En `.env`, deja `DATABASE_URL` apuntando a la base que creaste y pon un `JWT_SECRET` propio (cualquier texto largo al azar):
+
+```
+DATABASE_URL="mysql://cfloral:cfloral_dev@localhost:3306/cfloral"
+JWT_SECRET="pon-aqui-un-texto-largo-y-al-azar"
+PORT=4000
+```
+
+Guarda y cierra, luego compila backend y frontend:
+
+```powershell
+cd C:\CFloral\server
+npm install
+npx prisma migrate deploy
+npm run build
+
+cd C:\CFloral\client
+npm install
+npm run build
+```
+
+### 5. Probarlo manualmente primero
+
+```powershell
+cd C:\CFloral\server
+node dist\index.js
+```
+
+Debe aparecer `CFloral escuchando en http://localhost:4000`. Abre esa URL en el navegador del mismo servidor para confirmar que carga. Al primer arranque, si la base está vacía, se crean solas las 3 tiendas y el usuario `admin@cfloral.com` / `admin123`. Cierra con Ctrl+C cuando confirmes que funciona.
+
+### 6. Dejarlo corriendo siempre como servicio de Windows
+
+Para que no dependa de tener una ventana abierta y arranque solo si se reinicia el servidor, usa **NSSM** (Non-Sucking Service Manager), una herramienta gratuita para convertir cualquier programa en un servicio de Windows:
+
+1. Descarga NSSM desde [nssm.cc](https://nssm.cc/download) y descomprime `nssm.exe` en, por ejemplo, `C:\CFloral\nssm.exe`.
+2. En PowerShell (como Administrador):
+   ```powershell
+   C:\CFloral\nssm.exe install CFloral
    ```
-4. **Arrancar** el proceso (queda escuchando en el puerto de `PORT`, por defecto 4000):
-   ```bash
-   cd server && node dist/index.js
+3. Se abre una ventana: en **Path** pon la ruta a `node.exe` (normalmente `C:\Program Files\nodejs\node.exe`), en **Startup directory** pon `C:\CFloral\server`, y en **Arguments** pon `dist\index.js`. Click **Install service**.
+4. Arráncalo:
+   ```powershell
+   nssm start CFloral
    ```
-   Al primer arranque, si la base está vacía, se crean solas las 3 tiendas y el usuario `admin@cfloral.com` / `admin123`.
-5. **Dejarlo corriendo siempre** — para que sobreviva a reinicios y reinicie solo si falla, usa `pm2` (`npm i -g pm2 && pm2 start dist/index.js --name cfloral && pm2 save && pm2 startup`) o un servicio `systemd`.
-6. **Acceso desde la red/celulares** — si el servidor tiene una IP fija en la red de las tiendas, cada empleada abre `http://IP-DEL-SERVOR:4000` desde su navegador o celular (misma red/VPN) y puede "Agregar a pantalla de inicio". Si quieren un dominio propio y HTTPS, se pone un reverse proxy (Nginx/Apache) delante apuntando al puerto 4000.
+   Desde ahora el servicio arranca solo con Windows y se reinicia si el proceso falla. Se administra como cualquier servicio desde `services.msc` (buscar "CFloral").
+
+### 7. Acceso desde las tiendas/celulares
+
+Averigua la IP del servidor en la red local (`ipconfig`, busca "Dirección IPv4"). Abre el puerto 4000 en el **Firewall de Windows** (Firewall de Windows Defender → Reglas de entrada → Nueva regla → Puerto → TCP 4000 → Permitir). Luego, desde cualquier computadora o celular conectado a la misma red (o VPN), abren `http://IP-DEL-SERVIDOR:4000` y pueden "Agregar a pantalla de inicio" desde el navegador.
 
 **Importante para producción:**
-- Cambia `JWT_SECRET` en el `.env` del servidor a un valor largo y aleatorio propio (no el de ejemplo).
 - Cambia la contraseña del usuario `admin@cfloral.com` en cuanto entren por primera vez.
-- Haz respaldos periódicos de la base MySQL (`mysqldump`), ya que ahí vive toda la información del negocio.
+- Haz respaldos periódicos de la base con `mysqldump` (o el respaldo automático que ya tengan configurado en ese MySQL), ya que ahí vive toda la información del negocio.
+- Si más adelante actualizas el código (`git pull` + repetir el paso 4 de compilar), solo necesitas `nssm restart CFloral` para que tome los cambios.
 
-*(El repo también incluye un `render.yaml` por si en algún momento prefieren desplegarlo en la nube en vez de on-premise — no es necesario para la instalación local.)*
+*(El repo también incluye un `render.yaml` por si en algún momento prefieren además tenerlo accesible desde internet vía la nube — no es necesario para esta instalación local.)*
 
 ## Roadmap sugerido
 
