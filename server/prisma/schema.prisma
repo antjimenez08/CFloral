@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum OrderStatus {
+  PENDING
+  IN_PROGRESS
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+model Store {
+  id        String    @id @default(cuid())
+  name      String
+  address   String?
+  phone     String?
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  users    User[]
+  products Product[]
+  orders   Order[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(EMPLOYEE)
+  storeId      String?
+  store        Store?   @relation(fields: [storeId], references: [id])
+  createdAt    DateTime @default(now())
+
+  orders Order[]
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  orders Order[]
+}
+
+model Product {
+  id                String   @id @default(cuid())
+  storeId           String
+  store             Store    @relation(fields: [storeId], references: [id])
+  name              String
+  description       String?
+  unit              String   @default("unidad")
+  unitPrice         Decimal  @db.Decimal(10, 2)
+  stock             Int      @default(0)
+  lowStockThreshold Int      @default(5)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  orderItems OrderItem[]
+
+  @@index([storeId])
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  invoiceNumber String        @unique
+  storeId       String
+  store         Store         @relation(fields: [storeId], references: [id])
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id])
+  createdById   String
+  createdBy     User          @relation(fields: [createdById], references: [id])
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  deliveryDate  DateTime?
+  notes         String?
+  subtotal      Decimal       @db.Decimal(10, 2)
+  total         Decimal       @db.Decimal(10, 2)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  items OrderItem[]
+
+  @@index([storeId])
+  @@index([customerId])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  subtotal  Decimal @db.Decimal(10, 2)
+}
