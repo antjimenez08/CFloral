@@ -9,13 +9,31 @@ server/   API REST (Node + Express + TypeScript + Prisma + MySQL)
 client/   Web/PWA (React + Vite + TypeScript + Tailwind)
 ```
 
-## Modelo de datos (MVP)
+## Modelo de datos
+
+Los tres módulos están pensados como en sistemas de gestión de floristerías (CRM con fechas
+especiales, ocasión y destinatario del pedido, control de perecibilidad en inventario), de forma
+que ya queden capturados los datos necesarios para más adelante hacer analítica predictiva
+(segmentación RFM, demanda estacional por ocasión, tasa de satisfacción, etc.) sin tener que
+rediseñar el esquema.
 
 - **Store**: cada una de las 3 tiendas.
-- **User**: usuarios con rol `ADMIN` (ve todas las tiendas), `MANAGER`/`EMPLOYEE` (fijos a una tienda).
+- **User**: usuarios con rol `ADMIN` (ve todas las tiendas), `MANAGER`/`EMPLOYEE` (fijos a una tienda). Un pedido puede tener un diseñador/florista asignado (`assignedTo`).
 - **Customer**: clientes, compartidos entre las 3 tiendas.
+  - Tipo (persona/empresa), documento, fecha de nacimiento, contacto preferido y canal por el que llegó.
+  - **CustomerAddress**: direcciones guardadas (casa, oficina, "casa de mamá"...) con su propio destinatario/teléfono, para reusarlas en pedidos futuros.
+  - **CustomerSpecialDate**: fechas recurrentes (cumpleaños, aniversario) para poder contactar al cliente antes de la fecha.
+  - Estadísticas RFM recalculadas en cada pedido: `lastOrderAt`, `ordersCount`, `lifetimeValue` — base para segmentar clientes (frecuentes, en riesgo de fuga, VIP) sin tener que agregar todos los pedidos en cada consulta.
 - **Product**: catálogo/inventario, uno por tienda (mismo nombre puede repetirse en cada tienda con su propio stock y precio).
-- **Order** + **OrderItem**: pedidos con número de factura autogenerado (`F-000001`), estado (pendiente/en proceso/entregado/cancelado) y estado de pago (sin pagar/parcial/pagado). Al crear un pedido se descuenta el stock automáticamente.
+  - Categoría, SKU, color y etiquetas de ocasión (para sugerir productos según el motivo del pedido).
+  - Costo de compra (además del precio de venta, para calcular margen), cantidad sugerida de reorden y vida útil en días (control de frescura de flores).
+- **Order** + **OrderItem**: pedidos con número de factura autogenerado (`F-000001`).
+  - Estado ampliado (pendiente/en proceso/**listo para recoger**/**en camino**/entregado/cancelado) y estado de pago (sin pagar/parcial/pagado). Al crear un pedido se descuenta el stock automáticamente.
+  - Ocasión (cumpleaños, aniversario, condolencias, boda...) y canal de entrada (tienda, teléfono, WhatsApp, web...), la señal más útil para anticipar demanda estacional.
+  - Destinatario del pedido (nombre/teléfono/relación) y mensaje de tarjeta, ya que en floristería quien compra y quien recibe suelen ser personas distintas.
+  - Entrega: recoger en tienda o domicilio, con dirección/ciudad/ventana horaria y bandera de "urgente".
+  - Descuento y costo de envío (el total se calcula como subtotal − descuento + envío).
+  - Calificación de satisfacción (1–5) y comentario, capturables después de la entrega — insumo directo para analítica de atención al cliente.
 
 ## Requisitos
 
@@ -160,9 +178,9 @@ Averigua la IP del servidor en la red local (`ipconfig`, busca "Dirección IPv4"
 
 ## Roadmap sugerido
 
-1. **Ahora (MVP):** clientes, inventario por tienda, pedidos con factura interna. ✅
-2. **Siguiente:** reportes de ventas por tienda/período, historial de pedidos por cliente, alertas de stock bajo por email/WhatsApp.
-3. **Proveedores:** catálogo de proveedores, órdenes de compra, recepción de mercancía (actualiza inventario).
+1. **Ahora (MVP+):** clientes con perfil completo (direcciones, fechas especiales, RFM), inventario con categorías/costos/perecibilidad, pedidos con ocasión/destinatario/entrega/calificación. ✅
+2. **Siguiente:** dashboard de reportes y analítica predictiva — segmentación de clientes (frecuentes/en riesgo de fuga/VIP) a partir de las estadísticas RFM ya capturadas, demanda estacional por ocasión, alertas de stock bajo y de fechas especiales próximas por email/WhatsApp.
+3. **Proveedores:** catálogo de proveedores, órdenes de compra, recepción de mercancía (actualiza inventario y `receivedAt`).
 4. **Contabilidad:** cuentas por cobrar/pagar, gastos, cierre de caja diario por tienda, integración con facturación electrónica fiscal si el país lo requiere.
 5. **Multiusuario avanzado:** permisos más finos, auditoría de cambios, app nativa si se necesita cámara/notificaciones push.
 

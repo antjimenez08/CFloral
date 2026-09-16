@@ -8,13 +8,56 @@ export const ordersRouter = Router();
 
 ordersRouter.use(requireAuth);
 
+const orderStatus = z.enum([
+  "PENDING",
+  "IN_PROGRESS",
+  "READY_FOR_PICKUP",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "CANCELLED",
+]);
+const paymentStatus = z.enum(["UNPAID", "PARTIAL", "PAID"]);
+const contactChannel = z.enum([
+  "WALK_IN",
+  "PHONE",
+  "WHATSAPP",
+  "EMAIL",
+  "WEBSITE",
+  "SOCIAL_MEDIA",
+  "MARKETPLACE",
+  "REFERRAL",
+  "OTHER",
+]);
+const occasion = z.enum([
+  "BIRTHDAY",
+  "ANNIVERSARY",
+  "SYMPATHY",
+  "WEDDING",
+  "GET_WELL",
+  "CONGRATULATIONS",
+  "ROMANCE",
+  "NEW_BABY",
+  "GRADUATION",
+  "CORPORATE",
+  "MOTHERS_DAY",
+  "VALENTINES",
+  "NO_OCCASION",
+  "OTHER",
+]);
+const deliveryMethod = z.enum(["PICKUP", "DELIVERY"]);
+
 ordersRouter.get("/", async (req, res) => {
   const storeId = resolveStoreId(req);
   if (!storeId) return res.status(400).json({ error: "Falta seleccionar una tienda" });
 
   const status = req.query.status as string | undefined;
+  const occasionFilter = req.query.occasion as string | undefined;
   const orders = await prisma.order.findMany({
-    where: { storeId, ...(status ? { status: status as never } : {}) },
+    where: {
+      storeId,
+      ...(status ? { status: status as never } : {}),
+      ...(occasionFilter ? { occasion: occasionFilter as never } : {}),
+    },
     include: { customer: true, items: { include: { product: true } } },
     orderBy: { createdAt: "desc" },
   });
@@ -28,6 +71,7 @@ ordersRouter.get("/:id", async (req, res) => {
       customer: true,
       store: true,
       createdBy: { select: { id: true, name: true } },
+      assignedTo: { select: { id: true, name: true } },
       items: { include: { product: true } },
     },
   });
@@ -40,6 +84,21 @@ const createOrderSchema = z.object({
   customerId: z.string().min(1),
   deliveryDate: z.string().datetime().optional(),
   notes: z.string().optional(),
+  channel: contactChannel.optional(),
+  occasion: occasion.optional(),
+  isRush: z.boolean().optional(),
+  recipientName: z.string().optional(),
+  recipientPhone: z.string().optional(),
+  recipientRelationship: z.string().optional(),
+  cardMessage: z.string().optional(),
+  deliveryMethod: deliveryMethod.optional(),
+  deliveryAddress: z.string().optional(),
+  deliveryCity: z.string().optional(),
+  deliveryWindow: z.string().optional(),
+  assignedToId: z.string().optional(),
+  discount: z.number().nonnegative().optional(),
+  deliveryFee: z.number().nonnegative().optional(),
+  externalReference: z.string().optional(),
   items: z
     .array(
       z.object({
@@ -55,7 +114,7 @@ ordersRouter.post("/", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: zodMessage(parsed.error) });
   }
-  const { storeId, customerId, deliveryDate, notes, items } = parsed.data;
+  const { storeId, customerId, deliveryDate, items, discount, deliveryFee, ...rest } = parsed.data;
 
   if (req.auth!.role !== "ADMIN" && req.auth!.storeId !== storeId) {
     return res.status(403).json({ error: "No puedes crear pedidos para otra tienda" });
@@ -94,23 +153,41 @@ ordersRouter.post("/", async (req, res) => {
         });
       }
 
+      const discountAmount = discount ?? 0;
+      const deliveryFeeAmount = deliveryFee ?? 0;
+      const total = Math.max(0, subtotal - discountAmount + deliveryFeeAmount);
+
       const orderCount = await tx.order.count();
       const invoiceNumber = `F-${String(orderCount + 1).padStart(6, "0")}`;
 
-      return tx.order.create({
+      const created = await tx.order.create({
         data: {
+          ...rest,
           invoiceNumber,
           storeId,
           customerId,
           createdById: req.auth!.userId,
           deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-          notes,
           subtotal,
-          total: subtotal,
+          discount: discountAmount,
+          deliveryFee: deliveryFeeAmount,
+          total,
           items: { create: orderItemsData },
         },
         include: { items: { include: { product: true } }, customer: true },
       });
+
+      // Estadísticas RFM del cliente: recencia, frecuencia y valor monetario.
+      await tx.customer.update({
+        where: { id: customerId },
+        data: {
+          lastOrderAt: created.createdAt,
+          ordersCount: { increment: 1 },
+          lifetimeValue: { increment: total },
+        },
+      });
+
+      return created;
     });
 
     res.status(201).json(order);
@@ -121,8 +198,11 @@ ordersRouter.post("/", async (req, res) => {
 });
 
 const updateOrderSchema = z.object({
-  status: z.enum(["PENDING", "IN_PROGRESS", "DELIVERED", "CANCELLED"]).optional(),
-  paymentStatus: z.enum(["UNPAID", "PARTIAL", "PAID"]).optional(),
+  status: orderStatus.optional(),
+  paymentStatus: paymentStatus.optional(),
+  assignedToId: z.string().optional(),
+  rating: z.number().int().min(1).max(5).optional(),
+  ratingComment: z.string().optional(),
 });
 
 ordersRouter.patch("/:id", async (req, res) => {

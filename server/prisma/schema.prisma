@@ -16,6 +16,8 @@ enum Role {
 enum OrderStatus {
   PENDING
   IN_PROGRESS
+  READY_FOR_PICKUP
+  OUT_FOR_DELIVERY
   DELIVERED
   CANCELLED
 }
@@ -26,13 +28,69 @@ enum PaymentStatus {
   PAID
 }
 
+enum CustomerType {
+  INDIVIDUAL
+  CORPORATE
+}
+
+/// Canal de contacto: se usa tanto para cómo llegó el cliente (adquisición) y su
+/// contacto preferido, como para el canal por el que entró un pedido.
+enum ContactChannel {
+  WALK_IN
+  PHONE
+  WHATSAPP
+  EMAIL
+  WEBSITE
+  SOCIAL_MEDIA
+  MARKETPLACE
+  REFERRAL
+  OTHER
+}
+
+/// Motivo del pedido. Es la señal más útil para analítica predictiva: permite
+/// anticipar demanda estacional y detectar fechas recurrentes por cliente.
+enum Occasion {
+  BIRTHDAY
+  ANNIVERSARY
+  SYMPATHY
+  WEDDING
+  GET_WELL
+  CONGRATULATIONS
+  ROMANCE
+  NEW_BABY
+  GRADUATION
+  CORPORATE
+  MOTHERS_DAY
+  VALENTINES
+  NO_OCCASION
+  OTHER
+}
+
+enum DeliveryMethod {
+  PICKUP
+  DELIVERY
+}
+
+enum ProductCategory {
+  FLOWERS
+  GREENERY
+  PLANT
+  ARRANGEMENT
+  CONTAINER
+  BALLOON
+  CARD
+  GIFT_ADDON
+  SUPPLY
+  OTHER
+}
+
 model Store {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
   address   String?
   phone     String?
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now())
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   users    User[]
   products Product[]
@@ -49,61 +107,157 @@ model User {
   store        Store?   @relation(fields: [storeId], references: [id])
   createdAt    DateTime @default(now())
 
-  orders Order[]
+  createdOrders  Order[] @relation("OrderCreatedBy")
+  assignedOrders Order[] @relation("OrderAssignedTo")
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  phone     String?
-  email     String?
-  address   String?
-  notes     String?
-  createdAt DateTime @default(now())
+  id                 String          @id @default(cuid())
+  name               String
+  phone              String?
+  email              String?
+  address            String?
+  notes              String?
+  type               CustomerType    @default(INDIVIDUAL)
+  documentId         String?
+  birthDate          DateTime?
+  preferredContact   ContactChannel?
+  acquisitionChannel ContactChannel?
+  /// Etiquetas separadas por coma (ej: "vip,corporativo"). Se normalizará a un
+  /// modelo de tags aparte si el volumen lo justifica más adelante.
+  tags               String?
+  createdAt          DateTime        @default(now())
 
-  orders Order[]
+  // Estadísticas RFM (Recencia/Frecuencia/Valor monetario) recalculadas al crear
+  // cada pedido, para poder segmentar clientes y alimentar análisis predictivo
+  // sin tener que agregar todos los pedidos en cada consulta.
+  lastOrderAt   DateTime?
+  ordersCount   Int       @default(0)
+  lifetimeValue Decimal   @default(0) @db.Decimal(10, 2)
+
+  addresses    CustomerAddress[]
+  specialDates CustomerSpecialDate[]
+  orders       Order[]
+
+  @@index([lastOrderAt])
+}
+
+/// Direcciones guardadas de un cliente (casa, oficina, la casa de mamá, etc.)
+/// para no volver a escribirlas en cada pedido y para saber a quién se le
+/// entrega usualmente cada una.
+model CustomerAddress {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label         String
+  recipientName String?
+  phone         String?
+  address       String
+  city          String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([customerId])
+}
+
+/// Fechas importantes recurrentes de un cliente (cumpleaños, aniversario de
+/// boda, etc.) para poder contactarlo proactivamente antes de la fecha.
+model CustomerSpecialDate {
+  id         String    @id @default(cuid())
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String
+  occasion   Occasion?
+  month      Int
+  day        Int
+  notes      String?
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId])
 }
 
 model Product {
-  id                String   @id @default(cuid())
+  id                String          @id @default(cuid())
   storeId           String
-  store             Store    @relation(fields: [storeId], references: [id])
+  store             Store           @relation(fields: [storeId], references: [id])
   name              String
   description       String?
-  unit              String   @default("unidad")
-  unitPrice         Decimal  @db.Decimal(10, 2)
-  stock             Int      @default(0)
-  lowStockThreshold Int      @default(5)
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now())
+  category          ProductCategory @default(FLOWERS)
+  sku               String?
+  color             String?
+  /// Etiquetas de ocasión sugerida separadas por coma (ej: "cumpleaños,amor").
+  tags              String?
+  unit              String          @default("unidad")
+  unitPrice         Decimal         @db.Decimal(10, 2)
+  costPrice         Decimal?        @db.Decimal(10, 2)
+  stock             Int             @default(0)
+  lowStockThreshold Int             @default(5)
+  reorderQuantity   Int?
+  /// Vida útil esperada en días desde que se recibe (para flores frescas).
+  shelfLifeDays     Int?
+  receivedAt        DateTime?
+  active            Boolean         @default(true)
+  createdAt         DateTime        @default(now())
 
   orderItems OrderItem[]
 
   @@index([storeId])
+  @@index([category])
 }
 
 model Order {
-  id            String        @id @default(cuid())
-  invoiceNumber String        @unique
+  id            String   @id @default(cuid())
+  invoiceNumber String   @unique
   storeId       String
-  store         Store         @relation(fields: [storeId], references: [id])
+  store         Store    @relation(fields: [storeId], references: [id])
   customerId    String
-  customer      Customer      @relation(fields: [customerId], references: [id])
+  customer      Customer @relation(fields: [customerId], references: [id])
   createdById   String
-  createdBy     User          @relation(fields: [createdById], references: [id])
-  status        OrderStatus   @default(PENDING)
-  paymentStatus PaymentStatus @default(UNPAID)
-  deliveryDate  DateTime?
-  notes         String?
-  subtotal      Decimal       @db.Decimal(10, 2)
-  total         Decimal       @db.Decimal(10, 2)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdBy     User     @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  assignedToId  String?
+  assignedTo    User?    @relation("OrderAssignedTo", fields: [assignedToId], references: [id])
+
+  status        OrderStatus    @default(PENDING)
+  paymentStatus PaymentStatus  @default(UNPAID)
+  channel       ContactChannel @default(WALK_IN)
+  occasion      Occasion       @default(NO_OCCASION)
+  isRush        Boolean        @default(false)
+
+  // El destinatario suele ser distinto de quien paga (es un regalo).
+  recipientName         String?
+  recipientPhone        String?
+  recipientRelationship String?
+  cardMessage           String?
+
+  deliveryMethod  DeliveryMethod @default(PICKUP)
+  deliveryAddress String?
+  deliveryCity    String?
+  deliveryDate    DateTime?
+  /// Ventana horaria en texto libre (ej: "2:00pm - 4:00pm") para mantener el MVP simple.
+  deliveryWindow  String?
+
+  notes       String?
+  subtotal    Decimal @db.Decimal(10, 2)
+  discount    Decimal @default(0) @db.Decimal(10, 2)
+  deliveryFee Decimal @default(0) @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(10, 2)
+
+  /// Calificación de satisfacción capturada después de la entrega (1-5).
+  rating        Int?
+  ratingComment String?
+
+  /// Referencia externa si el pedido vino de un marketplace/plataforma.
+  externalReference String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   items OrderItem[]
 
   @@index([storeId])
   @@index([customerId])
+  @@index([occasion])
+  @@index([channel])
 }
 
 model OrderItem {
