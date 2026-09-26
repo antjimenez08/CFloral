@@ -1,6 +1,6 @@
 # CFloral
 
-Aplicación web (instalable como PWA) para administrar una floristería con varias tiendas: pedidos con factura, clientes e inventario. Pensada para crecer hacia contabilidad, proveedores y reportes.
+Aplicación web (instalable como PWA) para administrar una floristería con varias tiendas: pedidos con factura, clientes, inventario, tablero de despachos, finanzas (costos/gastos/inversiones) y administración de empleados. Pensada para crecer hacia proveedores, reportes avanzados y comercialización a otras floristerías.
 
 ## Estructura
 
@@ -34,6 +34,17 @@ rediseñar el esquema.
   - Entrega: recoger en tienda o domicilio, con dirección/ciudad/ventana horaria y bandera de "urgente".
   - Descuento y costo de envío (el total se calcula como subtotal − descuento + envío).
   - Calificación de satisfacción (1–5) y comentario, capturables después de la entrega — insumo directo para analítica de atención al cliente.
+- **Expense**: registro financiero por tienda (tipo Costo/Gasto/Inversión, categoría, descripción, monto, fecha). Alimenta el dashboard de Finanzas junto con el costo de venta calculado de cada pedido.
+- **User.active**: un empleado desactivado no puede iniciar sesión (queda en el historial, no se borra).
+
+## Módulos
+
+- **Pedidos**: crear, listar y ver el detalle de cada pedido con su factura.
+- **Clientes**: perfil completo, direcciones guardadas, fechas especiales y estadísticas RFM.
+- **Despachos**: tablero por estado (Pendiente → En proceso → Listo para recoger → En camino → Entregado) con botones para avanzar/regresar cada pedido.
+- **Inventario**: catálogo de productos por tienda con costo, margen y stock.
+- **Finanzas**: tarjetas de Ventas/Costos/Gastos/Inversiones/EBITDA y registro manual de gastos.
+- **Administración** (solo ADMIN): alta, edición y activación/desactivación de empleados por tienda y rol.
 
 ## Requisitos
 
@@ -67,8 +78,9 @@ FLUSH PRIVILEGES;
 ```
 
 Usuarios de ejemplo tras el seed:
-- `admin@cfloral.com` / `admin123` (ve las 3 tiendas)
-- `centro@cfloral.com` / `empleada123` (fijo a "Floral Centro")
+- `admin@cfloral.com` / `admin123` (ve las 3 tiendas, único rol con acceso a Administración)
+- `centro@cfloral.com` / `empleada123` (Gerente, fijo a "Floral Centro")
+- `norte@cfloral.com` / `empleada123` (Vendedor/a, fijo a "Floral Norte")
 
 ## Poner en marcha el frontend
 
@@ -178,10 +190,11 @@ Averigua la IP del servidor en la red local (`ipconfig`, busca "Dirección IPv4"
 
 ## Roadmap sugerido
 
-1. **Ahora (MVP+):** clientes con perfil completo (direcciones, fechas especiales, RFM), inventario con categorías/costos/perecibilidad, pedidos con ocasión/destinatario/entrega/calificación. ✅
+1. **Ahora (MVP+):** clientes con perfil completo (direcciones, fechas especiales, RFM), inventario con categorías/costos/perecibilidad, pedidos con ocasión/destinatario/entrega/calificación, tablero de Despachos, Finanzas (costos/gastos/inversiones/EBITDA) y Administración de empleados. ✅
 2. **Siguiente:** dashboard de reportes y analítica predictiva — segmentación de clientes (frecuentes/en riesgo de fuga/VIP) a partir de las estadísticas RFM ya capturadas, demanda estacional por ocasión, alertas de stock bajo y de fechas especiales próximas por email/WhatsApp.
 3. **Proveedores:** catálogo de proveedores, órdenes de compra, recepción de mercancía (actualiza inventario y `receivedAt`).
-4. **Contabilidad:** cuentas por cobrar/pagar, gastos, cierre de caja diario por tienda, integración con facturación electrónica fiscal si el país lo requiere.
-5. **Multiusuario avanzado:** permisos más finos, auditoría de cambios, app nativa si se necesita cámara/notificaciones push.
+4. **Notificaciones automáticas:** integrar WhatsApp Business API para avisar al cliente en cada cambio de estado (hoy no hay ninguna integración de mensajería automática).
+5. **Multiusuario avanzado:** permisos más finos por módulo (no solo por rol), auditoría de cambios, app nativa si se necesita cámara/notificaciones push.
+6. **Camino a comercializable:** agregar `companyId` (multi-tenant) para poder vender la misma aplicación a otras floristerías sin tocar el modelo de datos existente.
 
 El modelo de datos ya está preparado para estas ampliaciones (todo queda separado por tienda desde el día uno), así que cada fase se agrega sin tener que rehacer lo existente.

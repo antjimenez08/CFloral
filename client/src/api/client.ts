@@ -37,6 +37,40 @@ export interface Store {
   address: string | null;
 }
 
+export type ExpenseType = "COST" | "EXPENSE" | "INVESTMENT";
+
+export interface Expense {
+  id: string;
+  storeId: string;
+  type: ExpenseType;
+  category: string;
+  description: string | null;
+  amount: string;
+  date: string;
+  createdAt: string;
+}
+
+export interface FinanceSummary {
+  ventas: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  ebitda: number;
+  ebitdaPct: number;
+  ordersCount: number;
+}
+
+export interface EmployeeUser {
+  id: string;
+  name: string;
+  email: string;
+  role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+  storeId: string | null;
+  storeName: string | null;
+  active: boolean;
+  createdAt: string;
+}
+
 export type ContactChannel =
   | "WALK_IN"
   | "PHONE"

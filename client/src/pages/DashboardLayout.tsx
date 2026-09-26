@@ -45,9 +45,20 @@ export default function DashboardLayout() {
           <NavLink to="/clientes" className={linkClass}>
             Clientes
           </NavLink>
+          <NavLink to="/despachos" className={linkClass}>
+            Despachos
+          </NavLink>
           <NavLink to="/inventario" className={linkClass}>
             Inventario
           </NavLink>
+          <NavLink to="/finanzas" className={linkClass}>
+            Finanzas
+          </NavLink>
+          {user?.role === "ADMIN" && (
+            <NavLink to="/administracion" className={linkClass}>
+              Administración
+            </NavLink>
+          )}
         </nav>
         <main className="flex-1 p-6">
           <Outlet />

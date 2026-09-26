@@ -95,6 +95,7 @@ model Store {
   users    User[]
   products Product[]
   orders   Order[]
+  expenses Expense[]
 }
 
 model User {
@@ -105,10 +106,12 @@ model User {
   role         Role     @default(EMPLOYEE)
   storeId      String?
   store        Store?   @relation(fields: [storeId], references: [id])
+  active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  createdOrders  Order[] @relation("OrderCreatedBy")
-  assignedOrders Order[] @relation("OrderAssignedTo")
+  createdOrders  Order[]   @relation("OrderCreatedBy")
+  assignedOrders Order[]   @relation("OrderAssignedTo")
+  expenses       Expense[]
 }
 
 model Customer {
@@ -269,4 +272,32 @@ model OrderItem {
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
   subtotal  Decimal @db.Decimal(10, 2)
+}
+
+/// Tipo de registro financiero: costo (ligado a producción/insumos), gasto
+/// operativo (arriendo, nómina, servicios) o inversión (activos, tecnología).
+enum ExpenseType {
+  COST
+  EXPENSE
+  INVESTMENT
+}
+
+/// Registro de facturas/gastos por tienda, para el módulo de Finanzas
+/// (costos, gastos e inversiones que no vienen del costo de venta de un pedido).
+model Expense {
+  id          String      @id @default(cuid())
+  storeId     String
+  store       Store       @relation(fields: [storeId], references: [id])
+  type        ExpenseType
+  category    String
+  description String?
+  amount      Decimal     @db.Decimal(10, 2)
+  date        DateTime
+  createdById String
+  createdBy   User        @relation(fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now())
+
+  @@index([storeId])
+  @@index([date])
+  @@index([type])
 }
