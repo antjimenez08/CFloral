@@ -2,9 +2,11 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
+export type AppRole = "ADMIN" | "GERENTE" | "ADMINISTRATIVO" | "VENDEDOR";
+
 export interface AuthTokenPayload {
   userId: string;
-  role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+  role: AppRole;
   storeId: string | null;
 }
 

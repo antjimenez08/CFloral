@@ -7,16 +7,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Roles exactamente como en la versión final del mockup: el Administrador ve
+/// y puede todo (no pasa por la matriz de permisos); los otros tres roles se
+/// rigen por la matriz editable en RolePermission.
 enum Role {
   ADMIN
-  MANAGER
-  EMPLOYEE
+  GERENTE
+  ADMINISTRATIVO
+  VENDEDOR
 }
 
 enum OrderStatus {
   PENDING
   IN_PROGRESS
-  READY_FOR_PICKUP
+  READY
   OUT_FOR_DELIVERY
   DELIVERED
   CANCELLED
@@ -33,179 +37,334 @@ enum CustomerType {
   CORPORATE
 }
 
-/// Canal de contacto: se usa tanto para cómo llegó el cliente (adquisición) y su
-/// contacto preferido, como para el canal por el que entró un pedido.
-enum ContactChannel {
-  WALK_IN
-  PHONE
-  WHATSAPP
-  EMAIL
-  WEBSITE
-  SOCIAL_MEDIA
-  MARKETPLACE
-  REFERRAL
-  OTHER
-}
-
-/// Motivo del pedido. Es la señal más útil para analítica predictiva: permite
-/// anticipar demanda estacional y detectar fechas recurrentes por cliente.
-enum Occasion {
-  BIRTHDAY
-  ANNIVERSARY
-  SYMPATHY
-  WEDDING
-  GET_WELL
-  CONGRATULATIONS
-  ROMANCE
-  NEW_BABY
-  GRADUATION
-  CORPORATE
-  MOTHERS_DAY
-  VALENTINES
-  NO_OCCASION
-  OTHER
-}
-
 enum DeliveryMethod {
   PICKUP
   DELIVERY
 }
 
-enum ProductCategory {
-  FLOWERS
-  GREENERY
-  PLANT
-  ARRANGEMENT
-  CONTAINER
-  BALLOON
-  CARD
-  GIFT_ADDON
-  SUPPLY
-  OTHER
+/// Tipo de registro financiero (antes ExpenseType). "OTRO" se agrega porque el
+/// mockup lo incluye como cuarto tipo además de Gasto/Costo/Inversión.
+enum RecordType {
+  GASTO
+  COSTO
+  INVERSION
+  OTRO
+}
+
+enum PaymentKind {
+  PROVEEDOR
+  NOMINA
+  CREDITO
+  OTRO
+}
+
+enum PayeeType {
+  PROVEEDOR
+  EMPLEADO
+  OTRO
+}
+
+enum PaymentRecordStatus {
+  PENDIENTE
+  PAGADO
 }
 
 model Store {
-  id        String   @id @default(cuid())
-  name      String
-  address   String?
-  phone     String?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  name       String
+  address    String?
+  phone      String?
+  active     Boolean  @default(true)
+  /// Logo propio de la sede (data URL base64), como en el mockup — cada tienda
+  /// puede tener un logo distinto, ya no hay un logo único de empresa.
+  logo       String?  @db.LongText
+  /// Color de acento de la tienda (hex), aplicado en vivo a toda la UI.
+  themeColor String?
+  adminId    String?
+  admin      User?    @relation("StoreAdmin", fields: [adminId], references: [id])
+  vendedorId String?
+  vendedor   User?    @relation("StoreVendedor", fields: [vendedorId], references: [id])
+  createdAt  DateTime @default(now())
 
-  users    User[]
-  products Product[]
-  orders   Order[]
-  expenses Expense[]
+  users            User[]            @relation("StoreUsers")
+  products         Product[]
+  supplies         Supply[]
+  orders           Order[]
+  expenses         Expense[]
+  payments         Payment[]
+  supplierInvoices SupplierInvoice[]
+  budgetEntries    BudgetEntry[]
 }
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         Role     @default(EMPLOYEE)
-  storeId      String?
-  store        Store?   @relation(fields: [storeId], references: [id])
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  passwordHash    String
+  role            Role      @default(VENDEDOR)
+  storeId         String?
+  store           Store?    @relation("StoreUsers", fields: [storeId], references: [id])
+  active          Boolean   @default(true)
+  /// Si es false, es un empleado registrado (ej. domiciliario) sin acceso al sistema.
+  hasSystemAccess Boolean   @default(true)
+  documentId      String?
+  phone           String?
+  position        String?
+  hireDate        DateTime? @db.Date
+  contractType    String?
+  eps             String?
+  pensionFund     String?
+  arl             String?
+  salary          Decimal?  @db.Decimal(12, 2)
+  /// Horario personalizado por día (si no usa una jornada con nombre), { LUN:{off,start,end}, ... }.
+  schedule        Json?
+  jornadaId       String?
+  jornada         Jornada?  @relation(fields: [jornadaId], references: [id])
+  createdAt       DateTime  @default(now())
 
-  createdOrders  Order[]   @relation("OrderCreatedBy")
-  assignedOrders Order[]   @relation("OrderAssignedTo")
-  expenses       Expense[]
+  createdOrders    Order[]   @relation("OrderCreatedBy")
+  assignedOrders   Order[]   @relation("OrderAssignedTo")
+  deliveryOrders   Order[]   @relation("OrderDeliveryPerson")
+  expenses         Expense[]
+  storesAsAdmin    Store[]   @relation("StoreAdmin")
+  storesAsVendedor Store[]   @relation("StoreVendedor")
+  payments         Payment[] @relation("PaymentEmployee")
+}
+
+/// Matriz de permisos editable por rol (Administración → Roles y permisos).
+/// ADMIN no se guarda aquí: siempre tiene acceso total (ver lib/permissions.ts).
+model RolePermission {
+  id      String  @id @default(cuid())
+  role    Role
+  key     String
+  allowed Boolean @default(false)
+
+  @@unique([role, key])
+}
+
+/// Jornada con nombre (turno) reutilizable entre empleados.
+model Jornada {
+  id    String @id @default(cuid())
+  name  String
+  /// { LUN:true, MAR:true, ... DOM:false }
+  days  Json
+  start String
+  end   String
+
+  users User[]
+}
+
+/// Listas desplegables administrables (Administración → Listas desplegables):
+/// formas de pago, categorías de producto, cargos, EPS, ARL, fondos de pensión,
+/// tipos de contrato, relaciones de persona, canales de adquisición, unidades
+/// de insumo, categorías de gasto/costo/inversión/otro.
+model ListOption {
+  id        String @id @default(cuid())
+  listKey   String
+  value     String
+  sortOrder Int    @default(0)
+
+  @@unique([listKey, value])
+  @@index([listKey])
+}
+
+/// Mensajes de tarjeta sugeridos por ocasión. El conjunto de ocasiones del
+/// sistema es, como en el mockup, el conjunto de valores distintos de `occasion`
+/// aquí (lista virtual "occasions" totalmente editable).
+model CardMessageTemplate {
+  id        String @id @default(cuid())
+  occasion  String
+  message   String @db.Text
+  sortOrder Int    @default(0)
+
+  @@index([occasion])
+}
+
+/// Datos de la empresa (un solo registro compartido) + contador global de
+/// numeración de pedidos ("CP-000001", igual que en el mockup).
+model CompanySettings {
+  id                String  @id @default("singleton")
+  razonSocial       String?
+  nit               String?
+  address           String?
+  phone             String?
+  email             String?
+  resolution        String?
+  nextInvoiceNumber Int     @default(1)
 }
 
 model Customer {
-  id                 String          @id @default(cuid())
+  id                 String       @id @default(cuid())
   name               String
   phone              String?
   email              String?
-  address            String?
   notes              String?
-  type               CustomerType    @default(INDIVIDUAL)
+  type               CustomerType @default(INDIVIDUAL)
   documentId         String?
   birthDate          DateTime?
-  preferredContact   ContactChannel?
-  acquisitionChannel ContactChannel?
-  /// Etiquetas separadas por coma (ej: "vip,corporativo"). Se normalizará a un
-  /// modelo de tags aparte si el volumen lo justifica más adelante.
+  acquisitionChannel String?
   tags               String?
-  createdAt          DateTime        @default(now())
+  createdAt          DateTime     @default(now())
 
-  // Estadísticas RFM (Recencia/Frecuencia/Valor monetario) recalculadas al crear
-  // cada pedido, para poder segmentar clientes y alimentar análisis predictivo
-  // sin tener que agregar todos los pedidos en cada consulta.
   lastOrderAt   DateTime?
   ordersCount   Int       @default(0)
   lifetimeValue Decimal   @default(0) @db.Decimal(10, 2)
+
+  /// Formas de pago preferidas del cliente, lista de strings.
+  paymentMethods Json @default("[]")
+  /// Correos adicionales del cliente, lista de strings.
+  emails         Json @default("[]")
+
+  personas Persona[]
+  orders   Order[]
+
+  @@index([lastOrderAt])
+}
+
+/// Modelo unificado de "personas" del mockup: el cliente (titular) y cada
+/// destinatario frecuente (hijo, pareja, oficina...) con sus propias
+/// direcciones y fechas especiales.
+model Persona {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String
+  isTitular    Boolean  @default(false)
+  phone        String?
+  createdAt    DateTime @default(now())
 
   addresses    CustomerAddress[]
   specialDates CustomerSpecialDate[]
   orders       Order[]
 
-  @@index([lastOrderAt])
+  @@index([customerId])
 }
 
-/// Direcciones guardadas de un cliente (casa, oficina, la casa de mamá, etc.)
-/// para no volver a escribirlas en cada pedido y para saber a quién se le
-/// entrega usualmente cada una.
 model CustomerAddress {
   id            String   @id @default(cuid())
-  customerId    String
-  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  personaId     String
+  persona       Persona  @relation(fields: [personaId], references: [id], onDelete: Cascade)
   label         String
   recipientName String?
   phone         String?
   address       String
   city          String?
+  /// Zona de entrega (Norte/Sur/Oeste/Oriente), editable manualmente o
+  /// autodetectada por palabra clave en la dirección (ver lib/zone.ts).
+  zone          String?
   isDefault     Boolean  @default(false)
   createdAt     DateTime @default(now())
 
-  @@index([customerId])
+  @@index([personaId])
 }
 
-/// Fechas importantes recurrentes de un cliente (cumpleaños, aniversario de
-/// boda, etc.) para poder contactarlo proactivamente antes de la fecha.
 model CustomerSpecialDate {
-  id         String    @id @default(cuid())
-  customerId String
-  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  label      String
-  occasion   Occasion?
-  month      Int
-  day        Int
-  notes      String?
-  createdAt  DateTime  @default(now())
+  id        String   @id @default(cuid())
+  personaId String
+  persona   Persona  @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  label     String
+  month     Int
+  day       Int
+  notes     String?
+  createdAt DateTime @default(now())
 
-  @@index([customerId])
+  @@index([personaId])
+}
+
+model Supplier {
+  id           String   @id @default(cuid())
+  name         String
+  contactName  String?
+  phone        String?
+  email        String?
+  address      String?
+  city         String?
+  taxId        String?
+  categories   String?
+  paymentTerms String?
+  leadTimeDays Int?
+  rating       Int?
+  active       Boolean  @default(true)
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  supplies         Supply[]
+  supplierInvoices SupplierInvoice[]
+  payments         Payment[]         @relation("PaymentSupplier")
+}
+
+/// Insumo (materia prima), SIEMPRE por tienda — igual que en el mockup, cada
+/// tienda tiene su propio inventario de insumos independiente.
+model Supply {
+  id          String    @id @default(cuid())
+  storeId     String
+  store       Store     @relation(fields: [storeId], references: [id])
+  name        String
+  unit        String
+  costPerUnit Decimal   @db.Decimal(12, 4)
+  stock       Decimal   @default(0) @db.Decimal(12, 2)
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id])
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  recipeItems          ProductSupply[]
+  supplierInvoiceItems SupplierInvoiceItem[]
+
+  @@index([storeId])
+}
+
+/// Receta (bill of materials) de un producto: qué insumos de ESA MISMA tienda
+/// usa y en qué cantidad, igual que en el mockup (la receta no se comparte
+/// entre tiendas aunque el producto esté vinculado por groupId).
+model ProductSupply {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplyId  String
+  supply    Supply  @relation(fields: [supplyId], references: [id])
+  quantity  Decimal @db.Decimal(12, 2)
+
+  @@index([productId])
 }
 
 model Product {
-  id                String          @id @default(cuid())
+  id                String    @id @default(cuid())
   storeId           String
-  store             Store           @relation(fields: [storeId], references: [id])
+  store             Store     @relation(fields: [storeId], references: [id])
   name              String
   description       String?
-  category          ProductCategory @default(FLOWERS)
+  /// Categoría de producto: valor libre validado contra ListOption("productCategories").
+  category          String    @default("Otros")
   sku               String?
   color             String?
-  /// Etiquetas de ocasión sugerida separadas por coma (ej: "cumpleaños,amor").
   tags              String?
-  unit              String          @default("unidad")
-  unitPrice         Decimal         @db.Decimal(10, 2)
-  costPrice         Decimal?        @db.Decimal(10, 2)
-  stock             Int             @default(0)
-  lowStockThreshold Int             @default(5)
+  unit              String    @default("unidad")
+  unitPrice         Decimal   @db.Decimal(10, 2)
+  costPrice         Decimal?  @db.Decimal(10, 2)
+  /// Mano de obra, componente del costo total además de la receta de insumos.
+  laborCost         Decimal   @default(0) @db.Decimal(10, 2)
+  stock             Int       @default(0)
+  lowStockThreshold Int       @default(5)
   reorderQuantity   Int?
-  /// Vida útil esperada en días desde que se recibe (para flores frescas).
   shelfLifeDays     Int?
   receivedAt        DateTime?
-  active            Boolean         @default(true)
-  createdAt         DateTime        @default(now())
+  /// Clave compartida entre copias del "mismo" producto en distintas tiendas
+  /// (cada tienda mantiene su propia fila independiente: precio/stock/receta
+  /// pueden divergir luego de creado).
+  groupId           String?
+  coverPhoto        String?   @db.LongText
+  photos            Json?
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
 
   orderItems OrderItem[]
+  recipe     ProductSupply[]
 
   @@index([storeId])
   @@index([category])
+  @@index([groupId])
 }
 
 model Order {
@@ -220,36 +379,57 @@ model Order {
   assignedToId  String?
   assignedTo    User?    @relation("OrderAssignedTo", fields: [assignedToId], references: [id])
 
-  status        OrderStatus    @default(PENDING)
-  paymentStatus PaymentStatus  @default(UNPAID)
-  channel       ContactChannel @default(WALK_IN)
-  occasion      Occasion       @default(NO_OCCASION)
-  isRush        Boolean        @default(false)
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMethod String?
+  /// Clave de ocasión: valor libre, uno de los definidos en CardMessageTemplate/ListOption("occasions").
+  occasion      String?
 
-  // El destinatario suele ser distinto de quien paga (es un regalo).
-  recipientName         String?
-  recipientPhone        String?
-  recipientRelationship String?
-  cardMessage           String?
+  recipientPersonaId String?
+  recipientPersona   Persona? @relation(fields: [recipientPersonaId], references: [id])
+  /// Snapshot del nombre del destinatario al momento del pedido.
+  recipientName      String?
+  recipientPhone     String?
+  cardMessage        String?  @db.Text
 
-  deliveryMethod  DeliveryMethod @default(PICKUP)
+  deliveryMethod  DeliveryMethod @default(DELIVERY)
+  /// Snapshot de la dirección elegida al momento del pedido.
   deliveryAddress String?
   deliveryCity    String?
-  deliveryDate    DateTime?
-  /// Ventana horaria en texto libre (ej: "2:00pm - 4:00pm") para mantener el MVP simple.
-  deliveryWindow  String?
+  /// Fecha programada de entrega/recogida.
+  deliveryDate    DateTime?      @db.Date
+  /// Jornada programada: Mañana/Tarde/Noche.
+  scheduledShift  String?
+  /// Hora programada en texto "HH:MM".
+  scheduledHour   String?
 
-  notes       String?
+  deliveryPersonId     String?
+  deliveryPerson       User?   @relation("OrderDeliveryPerson", fields: [deliveryPersonId], references: [id])
+  isThirdPartyDelivery Boolean @default(false)
+  thirdPartyDriverName String?
+  thirdPartyPlate      String?
+
+  notes       String? @db.Text
   subtotal    Decimal @db.Decimal(10, 2)
   discount    Decimal @default(0) @db.Decimal(10, 2)
   deliveryFee Decimal @default(0) @db.Decimal(10, 2)
   total       Decimal @db.Decimal(10, 2)
 
-  /// Calificación de satisfacción capturada después de la entrega (1-5).
-  rating        Int?
-  ratingComment String?
+  /// Última fase para la que se disparó la notificación de WhatsApp (se vuelve
+  /// a mostrar el badge "Cliente notificado" en cada fase nueva).
+  notifiedStatus  OrderStatus?
+  cardPrinted     Boolean      @default(false)
+  dispatchPrinted Boolean      @default(false)
 
-  /// Referencia externa si el pedido vino de un marketplace/plataforma.
+  /// Encuesta de satisfacción (muestreo 1 de cada 5 pedidos entregados).
+  surveySelected Boolean?
+  rating         Int?
+  ratingComment  String?  @db.Text
+  qCalidad       Int?
+  qPuntualidad   Int?
+  qRecomendacion Int?
+  surveyNotes    String?  @db.Text
+
   externalReference String?
 
   createdAt DateTime @default(now())
@@ -259,45 +439,109 @@ model Order {
 
   @@index([storeId])
   @@index([customerId])
-  @@index([occasion])
-  @@index([channel])
+  @@index([status])
+  @@index([deliveryPersonId])
 }
 
 model OrderItem {
-  id        String  @id @default(cuid())
-  orderId   String
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-  quantity  Int
-  unitPrice Decimal @db.Decimal(10, 2)
-  subtotal  Decimal @db.Decimal(10, 2)
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  /// Snapshot del nombre del producto al momento del pedido (igual que el mockup:
+  /// si el producto se renombra después, el histórico no cambia).
+  productName String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  subtotal    Decimal @db.Decimal(10, 2)
 }
 
-/// Tipo de registro financiero: costo (ligado a producción/insumos), gasto
-/// operativo (arriendo, nómina, servicios) o inversión (activos, tecnología).
-enum ExpenseType {
-  COST
-  EXPENSE
-  INVESTMENT
-}
-
-/// Registro de facturas/gastos por tienda, para el módulo de Finanzas
-/// (costos, gastos e inversiones que no vienen del costo de venta de un pedido).
 model Expense {
-  id          String      @id @default(cuid())
+  id          String     @id @default(cuid())
   storeId     String
-  store       Store       @relation(fields: [storeId], references: [id])
-  type        ExpenseType
+  store       Store      @relation(fields: [storeId], references: [id])
+  type        RecordType
   category    String
   description String?
-  amount      Decimal     @db.Decimal(10, 2)
+  amount      Decimal    @db.Decimal(10, 2)
   date        DateTime
   createdById String
-  createdBy   User        @relation(fields: [createdById], references: [id])
-  createdAt   DateTime    @default(now())
+  createdBy   User       @relation(fields: [createdById], references: [id])
+  createdAt   DateTime   @default(now())
 
   @@index([storeId])
   @@index([date])
   @@index([type])
+}
+
+/// "Pagos" — liquidación de pagos a proveedores/nómina/crédito/otros.
+model Payment {
+  id         String              @id @default(cuid())
+  storeId    String
+  store      Store               @relation(fields: [storeId], references: [id])
+  type       PaymentKind
+  payeeType  PayeeType
+  supplierId String?
+  supplier   Supplier?           @relation("PaymentSupplier", fields: [supplierId], references: [id])
+  employeeId String?
+  employee   User?               @relation("PaymentEmployee", fields: [employeeId], references: [id])
+  /// Solo cuando payeeType = OTRO (beneficiario en texto libre).
+  payeeName  String?
+  amount     Decimal             @db.Decimal(10, 2)
+  date       DateTime
+  method     String?
+  status     PaymentRecordStatus @default(PENDIENTE)
+  notes      String?
+  createdAt  DateTime            @default(now())
+
+  @@index([storeId])
+  @@index([status])
+  @@index([type])
+}
+
+/// Factura de proveedor recibida en Insumos: registra la compra y actualiza
+/// stock + costo promedio ponderado del insumo correspondiente.
+model SupplierInvoice {
+  id            String   @id @default(cuid())
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id])
+  supplierId    String
+  supplier      Supplier @relation(fields: [supplierId], references: [id])
+  invoiceNumber String
+  date          DateTime
+  total         Decimal  @db.Decimal(10, 2)
+  createdAt     DateTime @default(now())
+
+  items SupplierInvoiceItem[]
+
+  @@index([storeId])
+}
+
+model SupplierInvoiceItem {
+  id        String          @id @default(cuid())
+  invoiceId String
+  invoice   SupplierInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  supplyId  String
+  supply    Supply          @relation(fields: [supplyId], references: [id])
+  quantity  Decimal         @db.Decimal(12, 2)
+  unitCost  Decimal         @db.Decimal(12, 4)
+}
+
+/// Presupuesto de ventas por tienda/mes/producto. Clave por NOMBRE de producto
+/// (no por id) a propósito, igual que el mockup: el presupuesto sobrevive aunque
+/// cambie el id del producto.
+model BudgetEntry {
+  id          String  @id @default(cuid())
+  storeId     String
+  store       Store   @relation(fields: [storeId], references: [id])
+  /// "YYYY-MM"
+  month       String
+  productName String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  amount      Decimal @db.Decimal(10, 2)
+
+  @@unique([storeId, month, productName])
+  @@index([storeId, month])
 }

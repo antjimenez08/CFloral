@@ -8,7 +8,7 @@ export const expensesRouter = Router();
 
 expensesRouter.use(requireAuth);
 
-const expenseType = z.enum(["COST", "EXPENSE", "INVESTMENT"]);
+const expenseType = z.enum(["GASTO", "COSTO", "INVERSION", "OTRO"]);
 
 expensesRouter.get("/", async (req, res) => {
   const storeId = resolveStoreId(req);

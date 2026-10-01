@@ -12,6 +12,15 @@ import { ordersRouter } from "./routes/orders.routes";
 import { productsRouter } from "./routes/products.routes";
 import { storesRouter } from "./routes/stores.routes";
 import { usersRouter } from "./routes/users.routes";
+import { suppliersRouter } from "./routes/suppliers.routes";
+import { suppliesRouter } from "./routes/supplies.routes";
+import { supplierInvoicesRouter } from "./routes/supplierInvoices.routes";
+import { jornadasRouter } from "./routes/jornadas.routes";
+import { listsRouter } from "./routes/lists.routes";
+import { companyRouter } from "./routes/company.routes";
+import { permissionsRouter } from "./routes/permissions.routes";
+import { budgetsRouter } from "./routes/budgets.routes";
+import { paymentsRouter } from "./routes/payments.routes";
 
 const app = express();
 app.use(cors());
@@ -27,6 +36,15 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/expenses", expensesRouter);
 app.use("/api/finance", financeRouter);
+app.use("/api/suppliers", suppliersRouter);
+app.use("/api/supplies", suppliesRouter);
+app.use("/api/supplier-invoices", supplierInvoicesRouter);
+app.use("/api/jornadas", jornadasRouter);
+app.use("/api/lists", listsRouter);
+app.use("/api/company", companyRouter);
+app.use("/api/permissions", permissionsRouter);
+app.use("/api/budgets", budgetsRouter);
+app.use("/api/payments", paymentsRouter);
 
 // Sirve la web (client/dist) desde el mismo servicio para simplificar el despliegue.
 const clientDist = path.join(__dirname, "..", "..", "client", "dist");

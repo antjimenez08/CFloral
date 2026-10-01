@@ -1,6 +1,11 @@
-# CFloral
+# compañíafloral
 
-Aplicación web (instalable como PWA) para administrar una floristería con varias tiendas: pedidos con factura, clientes, inventario, tablero de despachos, finanzas (costos/gastos/inversiones) y administración de empleados. Pensada para crecer hacia proveedores, reportes avanzados y comercialización a otras floristerías.
+Aplicación web (instalable como PWA) para administrar una floristería con varias tiendas, con el
+mismo alcance que el mockup de validación: catálogo, pedidos con encuesta de satisfacción y
+tarjeta de regalo, despachos con tablero arrastrable y mapa de zonas, inventario con insumos y
+recetas de costo, proveedores, finanzas completas (dashboard, reportes, presupuestos,
+recomendaciones, facturas y pagos) y administración (empleados, sedes, horarios, listas
+desplegables, datos de la empresa y una matriz de roles y permisos editable).
 
 ## Estructura
 
@@ -9,42 +14,44 @@ server/   API REST (Node + Express + TypeScript + Prisma + MySQL)
 client/   Web/PWA (React + Vite + TypeScript + Tailwind)
 ```
 
-## Modelo de datos
+## Roles
 
-Los tres módulos están pensados como en sistemas de gestión de floristerías (CRM con fechas
-especiales, ocasión y destinatario del pedido, control de perecibilidad en inventario), de forma
-que ya queden capturados los datos necesarios para más adelante hacer analítica predictiva
-(segmentación RFM, demanda estacional por ocasión, tasa de satisfacción, etc.) sin tener que
-rediseñar el esquema.
+Igual que en el mockup, hay 4 roles. El Administrador siempre ve y puede todo; los otros tres se
+rigen por una matriz de permisos editable desde Administración → Roles y permisos (16 llaves,
+una por módulo/submódulo):
 
-- **Store**: cada una de las 3 tiendas.
-- **User**: usuarios con rol `ADMIN` (ve todas las tiendas), `MANAGER`/`EMPLOYEE` (fijos a una tienda). Un pedido puede tener un diseñador/florista asignado (`assignedTo`).
-- **Customer**: clientes, compartidos entre las 3 tiendas.
-  - Tipo (persona/empresa), documento, fecha de nacimiento, contacto preferido y canal por el que llegó.
-  - **CustomerAddress**: direcciones guardadas (casa, oficina, "casa de mamá"...) con su propio destinatario/teléfono, para reusarlas en pedidos futuros.
-  - **CustomerSpecialDate**: fechas recurrentes (cumpleaños, aniversario) para poder contactar al cliente antes de la fecha.
-  - Estadísticas RFM recalculadas en cada pedido: `lastOrderAt`, `ordersCount`, `lifetimeValue` — base para segmentar clientes (frecuentes, en riesgo de fuga, VIP) sin tener que agregar todos los pedidos en cada consulta.
-- **Product**: catálogo/inventario, uno por tienda (mismo nombre puede repetirse en cada tienda con su propio stock y precio).
-  - Categoría, SKU, color y etiquetas de ocasión (para sugerir productos según el motivo del pedido).
-  - Costo de compra (además del precio de venta, para calcular margen), cantidad sugerida de reorden y vida útil en días (control de frescura de flores).
-- **Order** + **OrderItem**: pedidos con número de factura autogenerado (`F-000001`).
-  - Estado ampliado (pendiente/en proceso/**listo para recoger**/**en camino**/entregado/cancelado) y estado de pago (sin pagar/parcial/pagado). Al crear un pedido se descuenta el stock automáticamente.
-  - Ocasión (cumpleaños, aniversario, condolencias, boda...) y canal de entrada (tienda, teléfono, WhatsApp, web...), la señal más útil para anticipar demanda estacional.
-  - Destinatario del pedido (nombre/teléfono/relación) y mensaje de tarjeta, ya que en floristería quien compra y quien recibe suelen ser personas distintas.
-  - Entrega: recoger en tienda o domicilio, con dirección/ciudad/ventana horaria y bandera de "urgente".
-  - Descuento y costo de envío (el total se calcula como subtotal − descuento + envío).
-  - Calificación de satisfacción (1–5) y comentario, capturables después de la entrega — insumo directo para analítica de atención al cliente.
-- **Expense**: registro financiero por tienda (tipo Costo/Gasto/Inversión, categoría, descripción, monto, fecha). Alimenta el dashboard de Finanzas junto con el costo de venta calculado de cada pedido.
-- **User.active**: un empleado desactivado no puede iniciar sesión (queda en el historial, no se borra).
+- **Administrador**: acceso total, incluida la Administración de empleados/sedes/roles.
+- **Gerente**: todo lo operativo y financiero de su tienda, sin administración de usuarios.
+- **Administrativo**: pedidos/despachos/finanzas/clientes/inventario, sin proveedores ni costos ocultos por defecto (ajustable).
+- **Vendedor/a**: pedidos, despachos, clientes e inventario (sin ver costos ni finanzas) por defecto.
 
 ## Módulos
 
-- **Pedidos**: crear, listar y ver el detalle de cada pedido con su factura.
-- **Clientes**: perfil completo, direcciones guardadas, fechas especiales y estadísticas RFM.
-- **Despachos**: tablero por estado (Pendiente → En proceso → Listo para recoger → En camino → Entregado) con botones para avanzar/regresar cada pedido.
-- **Inventario**: catálogo de productos por tienda con costo, margen y stock.
-- **Finanzas**: tarjetas de Ventas/Costos/Gastos/Inversiones/EBITDA y registro manual de gastos.
-- **Administración** (solo ADMIN): alta, edición y activación/desactivación de empleados por tienda y rol.
+- **Catálogo**: vitrina de productos de la tienda actual, con foto, precio y botón "Pedir" que arma un pedido nuevo.
+- **Pedidos**: cliente + persona destinataria (el modelo de "personas" permite varios destinatarios frecuentes por cliente, cada uno con sus propias direcciones), mensajes de tarjeta sugeridos por ocasión, encuesta de satisfacción (1 de cada 5 pedidos entregados, 3 preguntas + comentario), impresión del certificado de pago (`CP-000001`) y compartir por WhatsApp/email.
+- **Clientes**: perfil, personas (direcciones con zona, fechas especiales), histórico de pedidos y un panel de "¿A quién debo contactar?".
+- **Despachos**: tablero arrastrable por estado (Pendiente → En elaboración → Por despachar → En camino → Entregado) con filtros por fecha/mes/zona, asignación de domiciliario o tercero, impresión de tarjeta de regalo y orden de despacho, notificación automática por WhatsApp al cambiar de estado, y una pestaña Seguimiento con mapa ilustrativo por zonas.
+- **Inventario**: Productos (con receta de insumos, mano de obra sugerida y disponibilidad multi-tienda), Insumos (costo promedio ponderado al recibir factura de proveedor) y Proveedores.
+- **Finanzas**: Dashboard (KPIs, tendencia de ventas, ventas/gastos por categoría), Reportes (comparativo mes a mes, clientes nuevos/recurrentes/inactivos, rotación de productos, proyección de ventas), Presupuestos (por tienda/mes, presupuesto vs. real), Recomendaciones (qué comprar, estrategias de venta, acciones financieras, gestión operativa, resumen de presupuesto), Facturas (registro de costos/gastos/inversiones/otros) y Pagos (liquidación a proveedores/nómina/crédito/otros).
+- **Administración**: Empleados (incluye domiciliarios sin acceso al sistema), Sedes (logo y color propios por tienda), Horarios (jornadas con nombre), Listas desplegables (formas de pago, categorías, cargos, EPS/ARL/fondo de pensión, canales de adquisición, ocasiones y sus mensajes de tarjeta...), Datos de la empresa y Roles y permisos.
+
+## Modelo de datos
+
+El esquema (`server/prisma/schema.prisma`) tiene un modelo por cada entidad del mockup: `Store`
+(con logo/color propios), `User` (empleado, con los campos colombianos típicos: documento, EPS,
+ARL, fondo de pensión, jornada), `RolePermission` (la matriz de permisos), `Jornada`,
+`ListOption` y `CardMessageTemplate` (listas administrables), `CompanySettings` (datos de la
+empresa + contador global de pedidos), `Customer` + `Persona` + `CustomerAddress` +
+`CustomerSpecialDate` (CRM con varios destinatarios por cliente), `Supplier`, `Supply` (insumo,
+por tienda) + `ProductSupply` (receta) + `SupplierInvoice`, `Product` (por tienda, con
+`groupId` para reconocer "el mismo producto" en varias tiendas), `Order` + `OrderItem` (con
+snapshot de nombre/precio, destinatario, zona, estado de encuesta), `Expense` (Gasto/Costo/
+Inversión/Otro), `Payment` y `BudgetEntry`.
+
+Todas las tiendas comparten el mismo pool de datos (clientes, proveedores, listas, roles) y cada
+tienda tiene su propio inventario, pedidos y finanzas — igual que en el mockup. El código está
+preparado para, más adelante, agregarle un `companyId` y aislar por empresa si se quiere vender
+a otras floristerías (ver Roadmap).
 
 ## Requisitos
 
@@ -58,7 +65,7 @@ cd server
 cp .env.example .env   # ajusta DATABASE_URL y JWT_SECRET
 npm install
 npx prisma migrate dev --name init
-npm run seed            # crea tiendas, un admin y datos de ejemplo
+npm run seed            # crea tiendas, empleados y datos de ejemplo
 npm run dev             # http://localhost:4000
 ```
 
@@ -78,9 +85,11 @@ FLUSH PRIVILEGES;
 ```
 
 Usuarios de ejemplo tras el seed:
-- `admin@cfloral.com` / `admin123` (ve las 3 tiendas, único rol con acceso a Administración)
-- `centro@cfloral.com` / `empleada123` (Gerente, fijo a "Floral Centro")
-- `norte@cfloral.com` / `empleada123` (Vendedor/a, fijo a "Floral Norte")
+- `admin@cfloral.com` / `admin123` — Administrador, ve las 3 tiendas.
+- `centro@cfloral.com` / `empleada123` — Gerente, Floral Centro.
+- `administrativo@cfloral.com` / `empleada123` — Administrativo, Floral Centro.
+- `vendedor@cfloral.com` / `empleada123` — Vendedor/a, Floral Centro.
+- `norte@cfloral.com` / `empleada123` — Vendedor/a, Floral Norte.
 
 ## Poner en marcha el frontend
 
@@ -123,6 +132,12 @@ FLUSH PRIVILEGES;
 
 Si tienen Git instalado: `git clone https://github.com/antjimenez08/CFloral.git`. Si no, descargan el `.zip` desde GitHub (botón verde **Code → Download ZIP**) y lo descomprimen, por ejemplo en `C:\CFloral`.
 
+**Importante si ya tenían una versión anterior instalada:** esta versión reescribió a fondo el
+modelo de datos (roles, clientes, pedidos, etc.) para igualar el mockup. Si ya habían corrido
+`npm run seed` o cargado datos reales con la versión anterior, hagan un respaldo con `mysqldump`
+antes de continuar y luego recreen la base (pasos 2 y 4) en lugar de reusar la anterior — no es
+compatible con los datos de la versión previa.
+
 ### 4. Configurar y compilar
 
 ```powershell
@@ -159,7 +174,7 @@ cd C:\CFloral\server
 node dist\index.js
 ```
 
-Debe aparecer `CFloral escuchando en http://localhost:4000`. Abre esa URL en el navegador del mismo servidor para confirmar que carga. Al primer arranque, si la base está vacía, se crean solas las 3 tiendas y el usuario `admin@cfloral.com` / `admin123`. Cierra con Ctrl+C cuando confirmes que funciona.
+Debe aparecer `CFloral escuchando en http://localhost:4000`. Abre esa URL en el navegador del mismo servidor para confirmar que carga. Al primer arranque, si la base está vacía, se crean solas las tiendas y los usuarios de ejemplo (ver la lista de arriba). Cierra con Ctrl+C cuando confirmes que funciona.
 
 ### 6. Dejarlo corriendo siempre como servicio de Windows
 
@@ -182,19 +197,46 @@ Para que no dependa de tener una ventana abierta y arranque solo si se reinicia 
 Averigua la IP del servidor en la red local (`ipconfig`, busca "Dirección IPv4"). Abre el puerto 4000 en el **Firewall de Windows** (Firewall de Windows Defender → Reglas de entrada → Nueva regla → Puerto → TCP 4000 → Permitir). Luego, desde cualquier computadora o celular conectado a la misma red (o VPN), abren `http://IP-DEL-SERVIDOR:4000` y pueden "Agregar a pantalla de inicio" desde el navegador.
 
 **Importante para producción:**
-- Cambia la contraseña del usuario `admin@cfloral.com` en cuanto entren por primera vez.
-- Haz respaldos periódicos de la base con `mysqldump` (o el respaldo automático que ya tengan configurado en ese MySQL), ya que ahí vive toda la información del negocio.
-- Si más adelante actualizas el código (`git pull` + repetir el paso 4 de compilar), solo necesitas `nssm restart CFloral` para que tome los cambios.
+- Cambien la contraseña de todos los usuarios de ejemplo en cuanto entren por primera vez (o creen usuarios nuevos desde Administración y desactiven los de ejemplo).
+- Hagan respaldos periódicos de la base con `mysqldump` (o el respaldo automático que ya tengan configurado en ese MySQL), ya que ahí vive toda la información del negocio.
+- Si más adelante actualizan el código (`git pull` + repetir el paso 4 de compilar), solo necesitan `nssm restart CFloral` para que tome los cambios. Si la actualización trae una migración de base de datos nueva, correr `npx prisma migrate deploy` antes de reiniciar el servicio.
 
 *(El repo también incluye un `render.yaml` por si en algún momento prefieren además tenerlo accesible desde internet vía la nube — no es necesario para esta instalación local.)*
 
+## Decisiones de diseño frente al mockup
+
+Para que quede claro qué es idéntico y qué se hizo distinto a propósito al pasar del mockup (HTML
++ localStorage) a la aplicación real:
+
+- **Impresión**: el mockup abría los documentos imprimibles con un truco de Blob + URL de objeto
+  porque corría dentro de un entorno de vista previa en sandbox que bloqueaba `window.print()`
+  directo. La app real no tiene esa restricción, así que imprime con el diálogo nativo del
+  navegador directamente — mismo resultado para quien usa la app, código más simple.
+- **Notificación de WhatsApp**: como en el mockup, es un enlace `wa.me` que se abre para que el
+  empleado envíe el mensaje con un clic — no hay un envío automático real de WhatsApp (eso
+  requiere contratar la API de WhatsApp Business, ver Roadmap).
+- **Fotos de productos/logos**: se guardan igual que en el mockup, como imágenes en base64 dentro
+  de la base de datos (sin un servicio de archivos aparte). Funciona bien para el volumen de un
+  negocio de este tamaño; si el catálogo de fotos crece mucho, conviene migrar a almacenamiento de
+  archivos (ver Roadmap).
+- **Contraseñas**: a diferencia del mockup (que las guardaba en texto plano a propósito, al ser
+  una maqueta), la app real siempre las guarda con hash (bcrypt) — esto nunca fue opcional.
+
 ## Roadmap sugerido
 
-1. **Ahora (MVP+):** clientes con perfil completo (direcciones, fechas especiales, RFM), inventario con categorías/costos/perecibilidad, pedidos con ocasión/destinatario/entrega/calificación, tablero de Despachos, Finanzas (costos/gastos/inversiones/EBITDA) y Administración de empleados. ✅
-2. **Siguiente:** dashboard de reportes y analítica predictiva — segmentación de clientes (frecuentes/en riesgo de fuga/VIP) a partir de las estadísticas RFM ya capturadas, demanda estacional por ocasión, alertas de stock bajo y de fechas especiales próximas por email/WhatsApp.
-3. **Proveedores:** catálogo de proveedores, órdenes de compra, recepción de mercancía (actualiza inventario y `receivedAt`).
-4. **Notificaciones automáticas:** integrar WhatsApp Business API para avisar al cliente en cada cambio de estado (hoy no hay ninguna integración de mensajería automática).
-5. **Multiusuario avanzado:** permisos más finos por módulo (no solo por rol), auditoría de cambios, app nativa si se necesita cámara/notificaciones push.
-6. **Camino a comercializable:** agregar `companyId` (multi-tenant) para poder vender la misma aplicación a otras floristerías sin tocar el modelo de datos existente.
+1. **Ahora:** paridad completa con el mockup validado — catálogo, pedidos con encuesta y tarjeta
+   de regalo, despachos con tablero arrastrable y seguimiento por zonas, inventario con insumos/
+   recetas/proveedores, finanzas completas (dashboard/reportes/presupuestos/recomendaciones/
+   facturas/pagos) y administración (empleados/sedes/horarios/listas/empresa/roles). ✅
+2. **Notificaciones automáticas de verdad:** integrar la API de WhatsApp Business (hoy es un
+   enlace manual) y alertas por email de stock bajo / fechas especiales próximas.
+3. **Proveedores — compras:** órdenes de compra formales (hoy solo se registra la factura ya
+   recibida).
+4. **Archivos en lugar de base64:** si el catálogo de fotos crece, mover fotos/logos a un
+   almacenamiento de archivos (disco o S3-compatible) en vez de guardarlas en la base de datos.
+5. **Multiusuario avanzado:** auditoría de cambios, app nativa si se necesita cámara/notificaciones push.
+6. **Camino a comercializable:** agregar `companyId` (multi-tenant) para poder vender la misma
+   aplicación a otras floristerías sin tocar el modelo de datos existente.
 
-El modelo de datos ya está preparado para estas ampliaciones (todo queda separado por tienda desde el día uno), así que cada fase se agrega sin tener que rehacer lo existente.
+El modelo de datos ya está preparado para estas ampliaciones (todo queda separado por tienda
+desde el día uno), así que cada fase se agrega sin tener que rehacer lo existente.

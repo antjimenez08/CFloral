@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from "express";
-import { AuthTokenPayload, verifyToken } from "../lib/auth";
+import { AppRole, AuthTokenPayload, verifyToken } from "../lib/auth";
 
 declare global {
   namespace Express {
@@ -25,7 +25,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-export function requireRole(...roles: Array<"ADMIN" | "MANAGER" | "EMPLOYEE">) {
+export function requireRole(...roles: AppRole[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.auth || !roles.includes(req.auth.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });

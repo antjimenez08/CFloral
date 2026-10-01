@@ -17,22 +17,11 @@ customersRouter.get("/", async (req, res) => {
           OR: [{ name: { contains: search } }, { phone: { contains: search } }],
         }
       : undefined,
+    include: { personas: { where: { isTitular: true }, take: 1 } },
     orderBy: { name: "asc" },
   });
   res.json(customers);
 });
-
-const contactChannel = z.enum([
-  "WALK_IN",
-  "PHONE",
-  "WHATSAPP",
-  "EMAIL",
-  "WEBSITE",
-  "SOCIAL_MEDIA",
-  "MARKETPLACE",
-  "REFERRAL",
-  "OTHER",
-]);
 
 const addressSchema = z.object({
   label: z.string().min(1),
@@ -40,46 +29,38 @@ const addressSchema = z.object({
   phone: z.string().optional(),
   address: z.string().min(1),
   city: z.string().optional(),
+  zone: z.string().optional(),
   isDefault: z.boolean().optional().default(false),
 });
 
 const specialDateSchema = z.object({
   label: z.string().min(1),
-  occasion: z
-    .enum([
-      "BIRTHDAY",
-      "ANNIVERSARY",
-      "SYMPATHY",
-      "WEDDING",
-      "GET_WELL",
-      "CONGRATULATIONS",
-      "ROMANCE",
-      "NEW_BABY",
-      "GRADUATION",
-      "CORPORATE",
-      "MOTHERS_DAY",
-      "VALENTINES",
-      "NO_OCCASION",
-      "OTHER",
-    ])
-    .optional(),
   month: z.number().int().min(1).max(12),
   day: z.number().int().min(1).max(31),
   notes: z.string().optional(),
+});
+
+const personaSchema = z.object({
+  name: z.string().min(1),
+  relationship: z.string().min(1),
+  isTitular: z.boolean().optional().default(false),
+  phone: z.string().optional(),
+  addresses: z.array(addressSchema).optional(),
+  specialDates: z.array(specialDateSchema).optional(),
 });
 
 const customerSchema = z.object({
   name: z.string().min(1),
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
-  address: z.string().optional(),
   notes: z.string().optional(),
   type: z.enum(["INDIVIDUAL", "CORPORATE"]).optional(),
   documentId: z.string().optional(),
   birthDate: z.string().datetime().optional().or(z.literal("")),
-  preferredContact: contactChannel.optional(),
-  acquisitionChannel: contactChannel.optional(),
+  acquisitionChannel: z.string().optional(),
   tags: z.string().optional(),
+  paymentMethods: z.array(z.string()).optional(),
+  emails: z.array(z.string()).optional(),
   addresses: z.array(addressSchema).optional(),
   specialDates: z.array(specialDateSchema).optional(),
 });
@@ -89,15 +70,25 @@ customersRouter.post("/", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: zodMessage(parsed.error) });
   }
-  const { addresses, specialDates, birthDate, ...rest } = parsed.data;
+  const { addresses, specialDates, birthDate, paymentMethods, emails, ...rest } = parsed.data;
   const customer = await prisma.customer.create({
     data: {
       ...rest,
       birthDate: birthDate ? new Date(birthDate) : undefined,
-      addresses: addresses?.length ? { create: addresses } : undefined,
-      specialDates: specialDates?.length ? { create: specialDates } : undefined,
+      paymentMethods: paymentMethods ?? [],
+      emails: emails ?? [],
+      personas: {
+        create: {
+          name: rest.name,
+          relationship: "Titular",
+          isTitular: true,
+          phone: rest.phone,
+          addresses: addresses?.length ? { create: addresses } : undefined,
+          specialDates: specialDates?.length ? { create: specialDates } : undefined,
+        },
+      },
     },
-    include: { addresses: true, specialDates: true },
+    include: { personas: { include: { addresses: true, specialDates: true } } },
   });
   res.status(201).json(customer);
 });
@@ -106,9 +97,14 @@ customersRouter.get("/:id", async (req, res) => {
   const customer = await prisma.customer.findUnique({
     where: { id: req.params.id },
     include: {
-      orders: { orderBy: { createdAt: "desc" }, take: 20 },
-      addresses: { orderBy: { isDefault: "desc" } },
-      specialDates: { orderBy: [{ month: "asc" }, { day: "asc" }] },
+      orders: { orderBy: { createdAt: "desc" }, take: 50 },
+      personas: {
+        orderBy: { isTitular: "desc" },
+        include: {
+          addresses: { orderBy: { isDefault: "desc" } },
+          specialDates: { orderBy: [{ month: "asc" }, { day: "asc" }] },
+        },
+      },
     },
   });
   if (!customer) return res.status(404).json({ error: "Cliente no encontrado" });
@@ -116,7 +112,10 @@ customersRouter.get("/:id", async (req, res) => {
 });
 
 customersRouter.put("/:id", async (req, res) => {
-  const parsed = customerSchema.omit({ addresses: true, specialDates: true }).partial().safeParse(req.body);
+  const parsed = customerSchema
+    .omit({ addresses: true, specialDates: true })
+    .partial()
+    .safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: zodMessage(parsed.error) });
   }
@@ -128,44 +127,90 @@ customersRouter.put("/:id", async (req, res) => {
   res.json(customer);
 });
 
-customersRouter.post("/:id/addresses", async (req, res) => {
+customersRouter.post("/:id/personas", async (req, res) => {
+  const parsed = personaSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: zodMessage(parsed.error) });
+  }
+  const { addresses, specialDates, ...rest } = parsed.data;
+  const persona = await prisma.persona.create({
+    data: {
+      ...rest,
+      customerId: req.params.id,
+      addresses: addresses?.length ? { create: addresses } : undefined,
+      specialDates: specialDates?.length ? { create: specialDates } : undefined,
+    },
+    include: { addresses: true, specialDates: true },
+  });
+  res.status(201).json(persona);
+});
+
+customersRouter.put("/personas/:personaId", async (req, res) => {
+  const parsed = personaSchema.omit({ addresses: true, specialDates: true }).partial().safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: zodMessage(parsed.error) });
+  }
+  const persona = await prisma.persona.update({ where: { id: req.params.personaId }, data: parsed.data });
+  res.json(persona);
+});
+
+customersRouter.delete("/personas/:personaId", async (req, res) => {
+  await prisma.persona.delete({ where: { id: req.params.personaId } });
+  res.status(204).end();
+});
+
+customersRouter.post("/personas/:personaId/addresses", async (req, res) => {
   const parsed = addressSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: zodMessage(parsed.error) });
   }
   const address = await prisma.customerAddress.create({
-    data: { ...parsed.data, customerId: req.params.id },
+    data: { ...parsed.data, personaId: req.params.personaId },
   });
   res.status(201).json(address);
 });
 
-customersRouter.delete("/:id/addresses/:addressId", async (req, res) => {
+customersRouter.put("/personas/:personaId/addresses/:addressId", async (req, res) => {
+  const parsed = addressSchema.partial().safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: zodMessage(parsed.error) });
+  }
+  const address = await prisma.customerAddress.update({
+    where: { id: req.params.addressId },
+    data: parsed.data,
+  });
+  res.json(address);
+});
+
+customersRouter.delete("/personas/:personaId/addresses/:addressId", async (req, res) => {
   await prisma.customerAddress.delete({ where: { id: req.params.addressId } });
   res.status(204).end();
 });
 
-customersRouter.post("/:id/special-dates", async (req, res) => {
+customersRouter.post("/personas/:personaId/special-dates", async (req, res) => {
   const parsed = specialDateSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: zodMessage(parsed.error) });
   }
   const specialDate = await prisma.customerSpecialDate.create({
-    data: { ...parsed.data, customerId: req.params.id },
+    data: { ...parsed.data, personaId: req.params.personaId },
   });
   res.status(201).json(specialDate);
 });
 
-customersRouter.delete("/:id/special-dates/:dateId", async (req, res) => {
+customersRouter.delete("/personas/:personaId/special-dates/:dateId", async (req, res) => {
   await prisma.customerSpecialDate.delete({ where: { id: req.params.dateId } });
   res.status(204).end();
 });
 
 /// Próximas fechas especiales (cumpleaños, aniversarios) dentro de N días, para
-/// poder contactar al cliente antes de la fecha. Base para recordatorios/alertas.
+/// poder contactar al cliente antes de la fecha.
 customersRouter.get("/special-dates/upcoming", async (req, res) => {
   const withinDays = Number(req.query.days) || 30;
   const today = new Date();
-  const dates = await prisma.customerSpecialDate.findMany({ include: { customer: true } });
+  const dates = await prisma.customerSpecialDate.findMany({
+    include: { persona: { include: { customer: true } } },
+  });
 
   const upcoming = dates
     .map((d) => {

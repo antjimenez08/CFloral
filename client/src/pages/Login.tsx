@@ -1,14 +1,19 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { applyStoreTheme } from "../lib/theme";
 
 export default function Login() {
   const { login, user, loading } = useAuth();
+
+  useEffect(() => {
+    applyStoreTheme(null);
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  if (user) return <Navigate to="/pedidos" replace />;
+  if (user) return <Navigate to="/catalogo" replace />;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -23,8 +28,8 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-pink-50">
       <form onSubmit={handleSubmit} className="bg-white shadow-md rounded-xl p-8 w-full max-w-sm space-y-4">
-        <h1 className="text-2xl font-bold text-pink-700 text-center">CFloral</h1>
-        <p className="text-sm text-gray-500 text-center">Administración de la floristería</p>
+        <h1 className="text-2xl font-bold text-center" style={{ color: "var(--accent,#db2777)" }}>compañíafloral</h1>
+        <p className="text-sm text-gray-500 text-center">Panel de administración</p>
         {error && <p className="text-sm text-red-600 text-center">{error}</p>}
         <div>
           <label className="block text-sm font-medium mb-1">Email</label>
