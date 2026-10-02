@@ -1,6 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Supplier, SupplierInvoice, Supply } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type SupplySortKey = "name" | "unit" | "costPerUnit" | "stock" | "supplierName";
 
 const money = (n: number) =>
   n.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -48,6 +51,32 @@ function InsumosTabInner({ currentStoreId }: { currentStoreId: string | null }) 
   const [rowUnitCost, setRowUnitCost] = useState("");
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [savingInvoice, setSavingInvoice] = useState(false);
+
+  const [supplySearch, setSupplySearch] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [supplySortKey, setSupplySortKey] = useState<SupplySortKey | null>(null);
+  const [supplySortDir, setSupplySortDir] = useState<SortDir>("asc");
+
+  function onSupplySort(key: SupplySortKey) {
+    toggleSort(key, supplySortKey, supplySortDir, setSupplySortKey, setSupplySortDir);
+  }
+
+  const visibleSupplies = useMemo(() => {
+    const term = supplySearch.trim().toLowerCase();
+    let list = supplies;
+    if (term) list = list.filter((s) => s.name.toLowerCase().includes(term));
+    if (supplierFilter) list = list.filter((s) => s.supplierId === supplierFilter);
+    if (supplySortKey) {
+      const numeric = supplySortKey === "costPerUnit" || supplySortKey === "stock";
+      list = [...list].sort((a, b) => {
+        const av = supplySortKey === "supplierName" ? a.supplier?.name ?? "" : a[supplySortKey as keyof Supply];
+        const bv = supplySortKey === "supplierName" ? b.supplier?.name ?? "" : b[supplySortKey as keyof Supply];
+        const cmp = numeric ? Number(av) - Number(bv) : compareValues(av, bv);
+        return supplySortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [supplies, supplySearch, supplierFilter, supplySortKey, supplySortDir]);
 
   async function loadSupplies() {
     if (!currentStoreId) return;
@@ -166,7 +195,7 @@ function InsumosTabInner({ currentStoreId }: { currentStoreId: string | null }) 
   );
 
   function addInvoiceRow() {
-    if (!rowSupplyId || !rowQty || !rowUnitCost || Number(rowQty) <= 0 || Number(rowUnitCost) <= 0) return;
+    if (!rowSupplyId || !rowQty || !rowUnitCost || Number(rowQty) <= 0 || Number(rowUnitCost) < 0) return;
     setInvoiceItems((prev) => [...prev, { supplyId: rowSupplyId, quantity: rowQty, unitCost: rowUnitCost }]);
     setRowSupplyId("");
     setRowQty("");
@@ -308,15 +337,36 @@ function InsumosTabInner({ currentStoreId }: { currentStoreId: string | null }) 
           </form>
         )}
 
+        <div className="flex flex-wrap gap-2">
+          <input
+            placeholder="Buscar insumo..."
+            value={supplySearch}
+            onChange={(e) => setSupplySearch(e.target.value)}
+            className="flex-1 min-w-[180px] border rounded-md px-3 py-2 text-sm"
+          />
+          <select
+            value={supplierFilter}
+            onChange={(e) => setSupplierFilter(e.target.value)}
+            className="border rounded-md px-3 py-2 text-sm"
+          >
+            <option value="">Todos los proveedores</option>
+            {suppliers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="bg-white rounded-lg border divide-y overflow-x-auto">
           <div className="p-3 hidden sm:flex sm:gap-3 text-xs font-semibold text-gray-500 uppercase min-w-[560px]">
-            <span className="flex-1">Nombre</span>
-            <span className="w-24">Unidad</span>
-            <span className="w-28 text-right">Costo/unidad</span>
-            <span className="w-20 text-right">Stock</span>
-            <span className="w-36">Proveedor</span>
+            <span className="flex-1"><SortHeader label="Nombre" sortKey="name" active={supplySortKey} dir={supplySortDir} onClick={onSupplySort} /></span>
+            <span className="w-24"><SortHeader label="Unidad" sortKey="unit" active={supplySortKey} dir={supplySortDir} onClick={onSupplySort} /></span>
+            <span className="w-28 text-right"><SortHeader label="Costo/unidad" sortKey="costPerUnit" active={supplySortKey} dir={supplySortDir} onClick={onSupplySort} className="justify-end" /></span>
+            <span className="w-20 text-right"><SortHeader label="Stock" sortKey="stock" active={supplySortKey} dir={supplySortDir} onClick={onSupplySort} className="justify-end" /></span>
+            <span className="w-36"><SortHeader label="Proveedor" sortKey="supplierName" active={supplySortKey} dir={supplySortDir} onClick={onSupplySort} /></span>
           </div>
-          {supplies.map((s) => {
+          {visibleSupplies.map((s) => {
             const low = Number(s.stock) <= 20;
             return (
               <div
@@ -332,7 +382,7 @@ function InsumosTabInner({ currentStoreId }: { currentStoreId: string | null }) 
               </div>
             );
           })}
-          {supplies.length === 0 && <p className="p-4 text-sm text-gray-500">Sin insumos en esta tienda.</p>}
+          {visibleSupplies.length === 0 && <p className="p-4 text-sm text-gray-500">Sin insumos en esta tienda.</p>}
         </div>
       </div>
 

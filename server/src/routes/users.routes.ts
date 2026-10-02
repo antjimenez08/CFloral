@@ -10,6 +10,18 @@ export const usersRouter = Router();
 
 usersRouter.use(requireAuth);
 
+// Directorio básico (sin datos sensibles) para selectores que cualquier rol necesita usar:
+// domiciliario en Despachos, empleado en Pagos (nómina), Administrador/Vendedor en Sedes.
+// A diferencia de GET "/", no exige el permiso "empleados" porque no expone salario, documento, etc.
+usersRouter.get("/directory", async (_req, res) => {
+  const users = await prisma.user.findMany({
+    where: { active: true },
+    select: { id: true, name: true, position: true, storeId: true },
+    orderBy: { name: "asc" },
+  });
+  res.json(users);
+});
+
 // Gestión de empleados (Administración → Empleados).
 usersRouter.get("/", requirePermission("empleados"), async (_req, res) => {
   const users = await prisma.user.findMany({

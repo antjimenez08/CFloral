@@ -1,6 +1,6 @@
 import { DragEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, EmployeeUser, Order, OrderStatus, STATUS_FLOW, STATUS_LABEL } from "../../api/client";
+import { api, DirectoryUser, Order, OrderStatus, STATUS_FLOW, STATUS_LABEL } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { printDispatchOrder, printGiftCard } from "./printDocs";
 import { orderZone, zoneSortOrder, ZONES } from "./zoneUtils";
@@ -25,9 +25,9 @@ function buildNotifyUrl(order: Order, newStatus: OrderStatus): string | null {
 }
 
 export default function TableroTab() {
-  const { currentStoreId, user, can } = useAuth();
+  const { currentStoreId, user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [domiciliarios, setDomiciliarios] = useState<EmployeeUser[] | null>(null);
+  const [domiciliarios, setDomiciliarios] = useState<DirectoryUser[] | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<OrderStatus | null>(null);
 
   const [filterDate, setFilterDate] = useState("");
@@ -42,15 +42,10 @@ export default function TableroTab() {
   useEffect(load, [currentStoreId]);
 
   useEffect(() => {
-    if (!can("empleados")) {
-      setDomiciliarios(null);
-      return;
-    }
     api
-      .get<EmployeeUser[]>("/users")
-      .then((res) => setDomiciliarios(res.data.filter((u) => u.position === "Domiciliario" && u.active)))
+      .get<DirectoryUser[]>("/users/directory")
+      .then((res) => setDomiciliarios(res.data.filter((u) => u.position === "Domiciliario")))
       .catch(() => setDomiciliarios(null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function patchOrder(orderId: string, patch: Record<string, unknown>) {
@@ -225,7 +220,7 @@ function OrderCard({
 }: {
   order: Order;
   isAdmin: boolean;
-  domiciliarios: EmployeeUser[] | null;
+  domiciliarios: DirectoryUser[] | null;
   prevStatus: OrderStatus | null;
   nextStatus: OrderStatus | null;
   nextLabel: string | undefined;

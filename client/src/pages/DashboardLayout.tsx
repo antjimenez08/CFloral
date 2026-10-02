@@ -132,11 +132,15 @@ export default function DashboardLayout() {
         </main>
       </div>
       <nav className="sm:hidden fixed bottom-0 inset-x-0 bg-white border-t flex overflow-x-auto">
-        {can("pedidos") && <NavLink to="/pedidos" className="flex-1 text-center py-2 text-xs">Pedidos</NavLink>}
-        {can("clientes") && <NavLink to="/clientes" className="flex-1 text-center py-2 text-xs">Clientes</NavLink>}
-        {can("taller") && <NavLink to="/despachos" className="flex-1 text-center py-2 text-xs">Despachos</NavLink>}
-        {can("inventario") && <NavLink to="/inventario" className="flex-1 text-center py-2 text-xs">Inventario</NavLink>}
-        {can("finanzas") && <NavLink to="/finanzas" className="flex-1 text-center py-2 text-xs">Finanzas</NavLink>}
+        {can("pedidos") && <NavLink to="/catalogo" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Catálogo</NavLink>}
+        {can("pedidos") && <NavLink to="/pedidos" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Pedidos</NavLink>}
+        {can("clientes") && <NavLink to="/clientes" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Clientes</NavLink>}
+        {can("taller") && <NavLink to="/despachos" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Despachos</NavLink>}
+        {can("inventario") && <NavLink to="/inventario" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Inventario</NavLink>}
+        {can("finanzas") && <NavLink to="/finanzas" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Finanzas</NavLink>}
+        {(can("empleados") || can("sedes") || can("horarios") || can("listas") || can("empresa") || can("roles")) && (
+          <NavLink to="/administracion" className="flex-1 text-center py-2 text-xs whitespace-nowrap px-2">Admin.</NavLink>
+        )}
       </nav>
     </div>
   );

@@ -1,6 +1,9 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, AppRole, EmployeeUser, Jornada, Store } from "../../api/client";
 import { money } from "../../lib/labels";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type EmployeeSortKey = "name" | "position" | "storeName" | "salary" | "contractType";
 
 const roleLabel: Record<AppRole, string> = {
   ADMIN: "Administrador",
@@ -31,7 +34,7 @@ const emptyForm = {
   arl: "",
   salary: "",
   jornadaId: "",
-  hasSystemAccess: true,
+  hasSystemAccess: false,
   email: "",
   password: "",
   role: "VENDEDOR" as AppRole,
@@ -49,6 +52,36 @@ export default function EmpleadosTab() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<EmployeeSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function onSort(key: EmployeeSortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
+
+  const visibleUsers = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    let list = users;
+    if (term) {
+      list = list.filter(
+        (u) =>
+          u.name.toLowerCase().includes(term) ||
+          (u.position ?? "").toLowerCase().includes(term) ||
+          (u.email ?? "").toLowerCase().includes(term)
+      );
+    }
+    if (sortKey) {
+      const numeric = sortKey === "salary";
+      list = [...list].sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        const cmp = numeric ? Number(av ?? 0) - Number(bv ?? 0) : compareValues(av, bv);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [users, search, sortKey, sortDir]);
 
   function load() {
     api.get<EmployeeUser[]>("/users").then((res) => setUsers(res.data));
@@ -61,7 +94,7 @@ export default function EmpleadosTab() {
 
   function startCreate() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, jornadaId: jornadas[0]?.id ?? "" });
     setError("");
     setShowForm(true);
   }
@@ -399,26 +432,35 @@ export default function EmpleadosTab() {
         </form>
       )}
 
-      <div className="bg-white border rounded-lg divide-y">
-        <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase">
-          <span className="flex-1">Nombre</span>
-          <span className="w-36">Cargo</span>
-          <span className="w-32">Tienda</span>
+      <input
+        placeholder="Buscar por nombre, cargo o email..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full max-w-md border rounded-md px-3 py-2 text-sm"
+      />
+
+      <div className="bg-white border rounded-lg divide-y overflow-x-auto">
+        <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[920px]">
+          <span className="flex-1"><SortHeader label="Nombre" sortKey="name" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-36"><SortHeader label="Cargo" sortKey="position" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-32"><SortHeader label="Tienda" sortKey="storeName" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-28"><SortHeader label="Salario" sortKey="salary" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-28"><SortHeader label="Contrato" sortKey="contractType" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="w-32">Jornada</span>
           <span className="w-32">Acceso</span>
           <span className="w-24">Estado</span>
           <span className="w-44"></span>
         </div>
-        {users.map((u) => (
-          <div key={u.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm">
+        {visibleUsers.map((u) => (
+          <div key={u.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm min-w-[920px]">
             <span className="flex-1">
               {u.name}
-              <div className="text-xs text-gray-500">
-                {u.email || "Sin email"} {u.salary ? `· ${money(u.salary)}` : ""}
-              </div>
+              <div className="text-xs text-gray-500">{u.email || "Sin email"}</div>
             </span>
             <span className="w-36 text-gray-500">{u.position ?? "—"}</span>
             <span className="w-32 text-gray-500">{u.storeName ?? "Todas"}</span>
+            <span className="w-28 text-gray-500">{u.salary ? money(u.salary) : "—"}</span>
+            <span className="w-28 text-gray-500">{u.contractType ?? "—"}</span>
             <span className="w-32 text-gray-500">{jornadaDisplay(u)}</span>
             <span className="w-32">
               <span
@@ -444,7 +486,7 @@ export default function EmpleadosTab() {
             </span>
           </div>
         ))}
-        {users.length === 0 && <p className="p-4 text-sm text-gray-500">Sin empleados registrados.</p>}
+        {visibleUsers.length === 0 && <p className="p-4 text-sm text-gray-500">Sin empleados registrados.</p>}
       </div>
     </div>
   );

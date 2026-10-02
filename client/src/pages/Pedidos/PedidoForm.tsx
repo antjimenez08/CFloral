@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, Customer, Order, Persona, Product } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { money } from "../../lib/labels";
+import ZoneField from "../../components/ZoneField";
 
 interface LineItem {
   productId: string;
@@ -13,6 +14,7 @@ interface ListsResponse {
   paymentMethods?: string[];
   relationships?: string[];
   occasions?: string[];
+  acquisitionChannels?: string[];
 }
 
 interface CardMessageTemplate {
@@ -39,12 +41,21 @@ export default function PedidoForm() {
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
+  const [newCustomerDocumentId, setNewCustomerDocumentId] = useState("");
+  const [newCustomerEmail, setNewCustomerEmail] = useState("");
+  const [newCustomerChannel, setNewCustomerChannel] = useState("");
+  const [newCustomerAddress, setNewCustomerAddress] = useState("");
+  const [newCustomerCity, setNewCustomerCity] = useState("");
+  const [newCustomerZone, setNewCustomerZone] = useState("");
 
   const [recipientPersonaId, setRecipientPersonaId] = useState("");
   const [showNewPersona, setShowNewPersona] = useState(false);
   const [newPersonaName, setNewPersonaName] = useState("");
   const [newPersonaRelationship, setNewPersonaRelationship] = useState("");
   const [newPersonaPhone, setNewPersonaPhone] = useState("");
+  const [newPersonaAddress, setNewPersonaAddress] = useState("");
+  const [newPersonaCity, setNewPersonaCity] = useState("");
+  const [newPersonaZone, setNewPersonaZone] = useState("");
 
   const [addressId, setAddressId] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
@@ -55,6 +66,7 @@ export default function PedidoForm() {
   const [occasion, setOccasion] = useState("");
   const [cardMessage, setCardMessage] = useState("");
   const [showMessageSuggestions, setShowMessageSuggestions] = useState(false);
+  const [suggestedMessageFeedback, setSuggestedMessageFeedback] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<CardMessageTemplate[]>([]);
   const [notes, setNotes] = useState("");
   const [discount, setDiscount] = useState("");
@@ -102,6 +114,17 @@ export default function PedidoForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId]);
 
+  function applyDefaultAddress(persona: Persona | undefined) {
+    const def = persona?.addresses?.find((a) => a.isDefault) ?? persona?.addresses?.[0];
+    if (def) {
+      setAddressId(def.id);
+      setDeliveryAddress(def.address);
+      setDeliveryCity(def.city ?? "");
+    } else {
+      setAddressId("");
+    }
+  }
+
   useEffect(() => {
     if (!customerId) {
       setCustomerDetail(null);
@@ -111,13 +134,21 @@ export default function PedidoForm() {
       setCustomerDetail(res.data);
       if (!editingId && !recipientPersonaId) {
         const titular = res.data.personas?.find((p) => p.isTitular);
-        if (titular) setRecipientPersonaId(titular.id);
+        if (titular) {
+          setRecipientPersonaId(titular.id);
+          applyDefaultAddress(titular);
+        }
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
   const selectedPersona: Persona | undefined = customerDetail?.personas?.find((p) => p.id === recipientPersonaId);
+
+  function selectRecipientPersona(personaId: string) {
+    setRecipientPersonaId(personaId);
+    applyDefaultAddress(customerDetail?.personas?.find((p) => p.id === personaId));
+  }
 
   const filteredCustomers = useMemo(() => {
     const term = customerSearch.trim().toLowerCase();
@@ -137,12 +168,27 @@ export default function PedidoForm() {
 
   async function createCustomer() {
     if (!newCustomerName.trim()) return;
-    const res = await api.post<Customer>("/customers", { name: newCustomerName, phone: newCustomerPhone || undefined });
+    const res = await api.post<Customer>("/customers", {
+      name: newCustomerName,
+      phone: newCustomerPhone || undefined,
+      documentId: newCustomerDocumentId || undefined,
+      email: newCustomerEmail || undefined,
+      acquisitionChannel: newCustomerChannel || undefined,
+      addresses: newCustomerAddress.trim()
+        ? [{ label: "Principal", address: newCustomerAddress, city: newCustomerCity || undefined, zone: newCustomerZone || undefined, isDefault: true }]
+        : undefined,
+    });
     setCustomers((prev) => [...prev, res.data]);
     selectCustomer(res.data);
     setShowNewCustomer(false);
     setNewCustomerName("");
     setNewCustomerPhone("");
+    setNewCustomerDocumentId("");
+    setNewCustomerEmail("");
+    setNewCustomerChannel("");
+    setNewCustomerAddress("");
+    setNewCustomerCity("");
+    setNewCustomerZone("");
   }
 
   async function createPersona() {
@@ -151,13 +197,20 @@ export default function PedidoForm() {
       name: newPersonaName,
       relationship: newPersonaRelationship,
       phone: newPersonaPhone || undefined,
+      addresses: newPersonaAddress.trim()
+        ? [{ label: "Principal", address: newPersonaAddress, city: newPersonaCity || undefined, zone: newPersonaZone || undefined, isDefault: true }]
+        : undefined,
     });
     setCustomerDetail((prev) => (prev ? { ...prev, personas: [...(prev.personas ?? []), res.data] } : prev));
     setRecipientPersonaId(res.data.id);
+    applyDefaultAddress(res.data);
     setShowNewPersona(false);
     setNewPersonaName("");
     setNewPersonaRelationship("");
     setNewPersonaPhone("");
+    setNewPersonaAddress("");
+    setNewPersonaCity("");
+    setNewPersonaZone("");
   }
 
   function applyAddress(id: string) {
@@ -193,28 +246,38 @@ export default function PedidoForm() {
 
   async function saveSuggestedMessage() {
     if (!occasion || !cardMessage.trim()) return;
-    await api.post("/lists/card-messages", { occasion, message: cardMessage.trim() });
+    try {
+      const res = await api.post("/lists/card-messages", { occasion, message: cardMessage.trim() });
+      setSuggestedMessageFeedback(res.data.alreadyExisted ? "Ese mensaje ya estaba guardado." : "Mensaje guardado como recomendado.");
+    } catch (err: any) {
+      setSuggestedMessageFeedback(err?.response?.data?.error || "No se pudo guardar el mensaje.");
+    }
+    setTimeout(() => setSuggestedMessageFeedback(null), 3000);
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!paymentMethod) {
+      setError("Selecciona una forma de pago");
+      return;
+    }
     setSubmitting(true);
     try {
       const body = {
         storeId: currentStoreId,
         customerId,
-        recipientPersonaId: recipientPersonaId || undefined,
+        recipientPersonaId: recipientPersonaId || null,
         recipientName: selectedPersona?.name,
-        recipientPhone: selectedPersona?.phone ?? undefined,
-        deliveryAddress: deliveryAddress || undefined,
-        deliveryCity: deliveryCity || undefined,
-        paymentMethod: paymentMethod || undefined,
-        occasion: occasion || undefined,
-        cardMessage: cardMessage || undefined,
-        notes: notes || undefined,
-        discount: discount ? Number(discount) : undefined,
-        deliveryFee: deliveryFee ? Number(deliveryFee) : undefined,
+        recipientPhone: selectedPersona?.phone ?? null,
+        deliveryAddress: deliveryAddress || null,
+        deliveryCity: deliveryCity || null,
+        paymentMethod: paymentMethod || null,
+        occasion: occasion || null,
+        cardMessage: cardMessage || null,
+        notes: notes || null,
+        discount: discount ? Number(discount) : 0,
+        deliveryFee: deliveryFee ? Number(deliveryFee) : 0,
         items: items.filter((it) => it.productId).map((it) => ({ productId: it.productId, quantity: it.quantity })),
       };
       const res = editingId ? await api.put(`/orders/${editingId}`, body) : await api.post("/orders", body);
@@ -268,6 +331,20 @@ export default function PedidoForm() {
           <div className="grid grid-cols-2 gap-2 bg-gray-50 p-2 rounded-md">
             <input placeholder="Nombre y apellido" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} className="border rounded-md px-3 py-2" />
             <input placeholder="Teléfono" value={newCustomerPhone} onChange={(e) => setNewCustomerPhone(e.target.value)} className="border rounded-md px-3 py-2" />
+            <input placeholder="Documento" value={newCustomerDocumentId} onChange={(e) => setNewCustomerDocumentId(e.target.value)} className="border rounded-md px-3 py-2" />
+            <input placeholder="Email" type="email" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} className="border rounded-md px-3 py-2" />
+            <select value={newCustomerChannel} onChange={(e) => setNewCustomerChannel(e.target.value)} className="border rounded-md px-3 py-2 col-span-2">
+              <option value="">¿Cómo llegó a la tienda?...</option>
+              {(lists.acquisitionChannels ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input
+              placeholder="Dirección (opcional)"
+              value={newCustomerAddress}
+              onChange={(e) => setNewCustomerAddress(e.target.value)}
+              className="border rounded-md px-3 py-2 col-span-2"
+            />
+            <input placeholder="Ciudad" value={newCustomerCity} onChange={(e) => setNewCustomerCity(e.target.value)} className="border rounded-md px-3 py-2" />
+            <ZoneField zone={newCustomerZone} onZoneChange={setNewCustomerZone} address={newCustomerAddress} />
             <button type="button" onClick={createCustomer} className="col-span-2 bg-pink-600 text-white rounded-md py-1.5 text-sm">
               Crear cliente
             </button>
@@ -278,7 +355,7 @@ export default function PedidoForm() {
       {customerId && (
         <fieldset className="border rounded-lg p-3 space-y-3">
           <legend className="text-sm font-medium px-1">Enviar a</legend>
-          <select value={recipientPersonaId} onChange={(e) => { setRecipientPersonaId(e.target.value); setAddressId(""); }} className="w-full border rounded-md px-3 py-2">
+          <select value={recipientPersonaId} onChange={(e) => selectRecipientPersona(e.target.value)} className="w-full border rounded-md px-3 py-2">
             <option value="">Selecciona destinatario...</option>
             {customerDetail?.personas?.map((p) => (
               <option key={p.id} value={p.id}>{p.name}{p.isTitular ? " (titular)" : ` — ${p.relationship}`}</option>
@@ -295,6 +372,14 @@ export default function PedidoForm() {
                 {(lists.relationships ?? []).filter((r) => r !== "Titular").map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
               <input placeholder="Teléfono" value={newPersonaPhone} onChange={(e) => setNewPersonaPhone(e.target.value)} className="border rounded-md px-3 py-2" />
+              <input
+                placeholder="Dirección (opcional)"
+                value={newPersonaAddress}
+                onChange={(e) => setNewPersonaAddress(e.target.value)}
+                className="border rounded-md px-3 py-2 col-span-2"
+              />
+              <input placeholder="Ciudad" value={newPersonaCity} onChange={(e) => setNewPersonaCity(e.target.value)} className="border rounded-md px-3 py-2" />
+              <ZoneField zone={newPersonaZone} onZoneChange={setNewPersonaZone} address={newPersonaAddress} className="border rounded-md px-3 py-2 col-span-3" />
               <button type="button" onClick={createPersona} className="col-span-3 bg-pink-600 text-white rounded-md py-1.5 text-sm">
                 Agregar persona
               </button>
@@ -344,6 +429,7 @@ export default function PedidoForm() {
             Guardar como mensaje recomendado
           </button>
         </div>
+        {suggestedMessageFeedback && <p className="text-xs text-gray-500 mt-1">{suggestedMessageFeedback}</p>}
         {showMessageSuggestions && (
           <div className="mt-2 bg-gray-50 rounded-md p-2 space-y-1">
             {suggestions.map((s) => (

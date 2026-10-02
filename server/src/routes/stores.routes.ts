@@ -20,8 +20,8 @@ const storeSchema = z.object({
   name: z.string().min(1),
   address: z.string().optional(),
   phone: z.string().optional(),
-  /// Logo propio de la sede (data URL base64), como en el mockup.
-  logo: z.string().optional(),
+  /// Logo propio de la sede (data URL base64), como en el mockup. nullable para poder quitarlo.
+  logo: z.string().nullable().optional(),
   themeColor: z.string().optional(),
   adminId: z.string().optional(),
   vendedorId: z.string().optional(),

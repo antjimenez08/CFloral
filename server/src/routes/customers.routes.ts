@@ -8,6 +8,12 @@ export const customersRouter = Router();
 
 customersRouter.use(requireAuth);
 
+function birthDateUpdate(value: string | null | undefined): Date | null | undefined {
+  if (value === null || value === "") return null;
+  if (value === undefined) return undefined;
+  return new Date(value);
+}
+
 customersRouter.get("/", async (req, res) => {
   const search = (req.query.search as string | undefined)?.trim();
   const customers = await prisma.customer.findMany({
@@ -56,7 +62,7 @@ const customerSchema = z.object({
   notes: z.string().optional(),
   type: z.enum(["INDIVIDUAL", "CORPORATE"]).optional(),
   documentId: z.string().optional(),
-  birthDate: z.string().datetime().optional().or(z.literal("")),
+  birthDate: z.string().datetime().optional().or(z.literal("")).nullable(),
   acquisitionChannel: z.string().optional(),
   tags: z.string().optional(),
   paymentMethods: z.array(z.string()).optional(),
@@ -74,7 +80,7 @@ customersRouter.post("/", async (req, res) => {
   const customer = await prisma.customer.create({
     data: {
       ...rest,
-      birthDate: birthDate ? new Date(birthDate) : undefined,
+      birthDate: birthDateUpdate(birthDate),
       paymentMethods: paymentMethods ?? [],
       emails: emails ?? [],
       personas: {
@@ -91,6 +97,56 @@ customersRouter.post("/", async (req, res) => {
     include: { personas: { include: { addresses: true, specialDates: true } } },
   });
   res.status(201).json(customer);
+});
+
+/// Sugerencias de "¿A quién debo contactar?" (igual que el mockup):
+/// 1) fechas especiales en los próximos `days`, excluyendo a quien ya tiene un pedido para
+///    esa persona en los últimos 20 días (no insistir si ya se le compró algo para esa fecha);
+/// 2) clientes "fuera de su hábito de compra": con al menos 2 pedidos (para tener un intervalo
+///    promedio entre compras), cuyos días desde la última compra caen entre 0.85x y 1.6x ese
+///    promedio — es decir, ya deberían estar volviendo a comprar según su propio patrón.
+/// Debe declararse antes de GET /:id para que Express no la confunda con un id de cliente.
+customersRouter.get("/contact-suggestions", async (req, res) => {
+  const withinDays = Number(req.query.days) || 21;
+  const today = new Date();
+  const now = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const dates = await prisma.customerSpecialDate.findMany({
+    include: { persona: { include: { customer: true, orders: { select: { createdAt: true } } } } },
+  });
+  const specialDateSuggestions = dates
+    .map((d) => {
+      let next = new Date(today.getFullYear(), d.month - 1, d.day);
+      if (next < now) next = new Date(today.getFullYear() + 1, d.month - 1, d.day);
+      const daysUntil = Math.round((next.getTime() - now.getTime()) / 86400000);
+      const recentlyOrdered = d.persona.orders.some(
+        (o) => (now.getTime() - new Date(o.createdAt).getTime()) / 86400000 <= 20
+      );
+      return { ...d, daysUntil, recentlyOrdered };
+    })
+    .filter((d) => d.daysUntil <= withinDays && !d.recentlyOrdered)
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+
+  const customers = await prisma.customer.findMany({
+    where: { ordersCount: { gte: 2 } },
+    include: { orders: { where: { status: { not: "CANCELLED" } }, select: { createdAt: true }, orderBy: { createdAt: "asc" } } },
+  });
+  const habitSuggestions = customers
+    .map((c) => {
+      const dates = c.orders.map((o) => new Date(o.createdAt).getTime());
+      if (dates.length < 2) return null;
+      const first = dates[0];
+      const last = dates[dates.length - 1];
+      const avgIntervalDays = (last - first) / (dates.length - 1) / 86400000;
+      const daysSinceLast = (now.getTime() - last) / 86400000;
+      if (avgIntervalDays <= 0) return null;
+      if (daysSinceLast < avgIntervalDays * 0.85 || daysSinceLast > avgIntervalDays * 1.6) return null;
+      return { customer: c, daysSinceLast: Math.round(daysSinceLast), avgIntervalDays: Math.round(avgIntervalDays) };
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
+    .sort((a, b) => b.daysSinceLast - a.daysSinceLast);
+
+  res.json({ specialDates: specialDateSuggestions, habitual: habitSuggestions });
 });
 
 customersRouter.get("/:id", async (req, res) => {
@@ -122,8 +178,14 @@ customersRouter.put("/:id", async (req, res) => {
   const { birthDate, ...rest } = parsed.data;
   const customer = await prisma.customer.update({
     where: { id: req.params.id },
-    data: { ...rest, birthDate: birthDate ? new Date(birthDate) : undefined },
+    data: { ...rest, birthDate: birthDateUpdate(birthDate) },
   });
+  if (rest.name !== undefined || rest.phone !== undefined) {
+    await prisma.persona.updateMany({
+      where: { customerId: req.params.id, isTitular: true },
+      data: { ...(rest.name !== undefined ? { name: rest.name } : {}), ...(rest.phone !== undefined ? { phone: rest.phone } : {}) },
+    });
+  }
   res.json(customer);
 });
 
@@ -225,3 +287,4 @@ customersRouter.get("/special-dates/upcoming", async (req, res) => {
 
   res.json(upcoming);
 });
+

@@ -41,6 +41,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  // Refresca usuario y permisos desde el servidor (no solo la foto que trajo el login), para que
+  // un cambio de permisos hecho en Administración → Roles se refleje sin tener que cerrar sesión.
+  useEffect(() => {
+    if (!user) return;
+    function refreshMe() {
+      api
+        .get<{ user: AuthUser; permissions: PermissionMatrix }>("/auth/me")
+        .then((res) => {
+          setUser(res.data.user);
+          setPermissions(res.data.permissions);
+          localStorage.setItem("cfloral_user", JSON.stringify(res.data.user));
+          localStorage.setItem("cfloral_permissions", JSON.stringify(res.data.permissions));
+        })
+        .catch(() => {});
+    }
+    refreshMe();
+    window.addEventListener("focus", refreshMe);
+    return () => window.removeEventListener("focus", refreshMe);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   function setCurrentStoreId(id: string) {
     localStorage.setItem("cfloral_current_store", id);
     setCurrentStoreIdState(id);

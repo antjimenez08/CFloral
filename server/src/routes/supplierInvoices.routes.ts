@@ -30,7 +30,7 @@ supplierInvoicesRouter.get("/", async (req, res) => {
 const invoiceItemSchema = z.object({
   supplyId: z.string().min(1),
   quantity: z.number().positive(),
-  unitCost: z.number().positive(),
+  unitCost: z.number().min(0),
 });
 
 const invoiceSchema = z.object({

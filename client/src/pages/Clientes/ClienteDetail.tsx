@@ -4,9 +4,20 @@ import { api, Customer, CustomerAddress, Persona } from "../../api/client";
 import { STATUS_LABEL } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { monthLabel } from "../../lib/labels";
+import { ZONES, guessZoneFromAddress } from "../Despachos/zoneUtils";
 
 const money = (n: number) =>
   Number(n).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+
+function Stars({ value }: { value: number }) {
+  const rounded = Math.round(value);
+  return (
+    <span className="text-amber-500 text-sm" title={`${value.toFixed(1)} / 5`}>
+      {"★".repeat(rounded)}
+      <span className="text-gray-300">{"★".repeat(5 - rounded)}</span>
+    </span>
+  );
+}
 
 interface ListsResponse {
   relationships?: string[];
@@ -30,6 +41,9 @@ export default function ClienteDetail() {
   // --- Perfil edit state ---
   const [pName, setPName] = useState("");
   const [pPhone, setPPhone] = useState("");
+  const [pEmail, setPEmail] = useState("");
+  const [pType, setPType] = useState<"INDIVIDUAL" | "CORPORATE">("INDIVIDUAL");
+  const [pBirthDate, setPBirthDate] = useState("");
   const [pDocumentId, setPDocumentId] = useState("");
   const [pAcquisitionChannel, setPAcquisitionChannel] = useState("");
   const [pTags, setPTags] = useState("");
@@ -51,6 +65,9 @@ export default function ClienteDetail() {
     setCustomer(res.data);
     setPName(res.data.name);
     setPPhone(res.data.phone || "");
+    setPEmail(res.data.email || "");
+    setPType(res.data.type);
+    setPBirthDate(res.data.birthDate ? res.data.birthDate.slice(0, 10) : "");
     setPDocumentId(res.data.documentId || "");
     setPAcquisitionChannel(res.data.acquisitionChannel || "");
     setPTags(res.data.tags || "");
@@ -102,6 +119,9 @@ export default function ClienteDetail() {
       await api.put(`/customers/${id}`, {
         name: pName,
         phone: pPhone || undefined,
+        email: pEmail || undefined,
+        type: pType,
+        birthDate: pBirthDate ? new Date(pBirthDate).toISOString() : null,
         documentId: pDocumentId || undefined,
         acquisitionChannel: pAcquisitionChannel || undefined,
         tags: pTags || undefined,
@@ -272,6 +292,35 @@ export default function ClienteDetail() {
               <input
                 value={pPhone}
                 onChange={(e) => setPPhone(e.target.value)}
+                className="w-full border rounded-md px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Email principal</label>
+              <input
+                type="email"
+                value={pEmail}
+                onChange={(e) => setPEmail(e.target.value)}
+                className="w-full border rounded-md px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Tipo de cliente</label>
+              <select
+                value={pType}
+                onChange={(e) => setPType(e.target.value as "INDIVIDUAL" | "CORPORATE")}
+                className="w-full border rounded-md px-3 py-2"
+              >
+                <option value="INDIVIDUAL">Persona natural</option>
+                <option value="CORPORATE">Empresa</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Fecha de nacimiento</label>
+              <input
+                type="date"
+                value={pBirthDate}
+                onChange={(e) => setPBirthDate(e.target.value)}
                 className="w-full border rounded-md px-3 py-2"
               />
             </div>
@@ -458,9 +507,21 @@ export default function ClienteDetail() {
                     <input name="label" required placeholder="Etiqueta (ej. Casa, Oficina)" className="border rounded-md px-2 py-1.5 col-span-2" />
                     <input name="recipientName" placeholder="Nombre de quien recibe (si es distinto)" className="border rounded-md px-2 py-1.5" />
                     <input name="phone" placeholder="Teléfono de contacto" className="border rounded-md px-2 py-1.5" />
-                    <input name="address" required placeholder="Dirección" className="border rounded-md px-2 py-1.5 col-span-2" />
+                    <input
+                      name="address"
+                      required
+                      placeholder="Dirección"
+                      className="border rounded-md px-2 py-1.5 col-span-2"
+                      onChange={(e) => {
+                        const zoneSelect = e.currentTarget.form?.elements.namedItem("zone") as HTMLSelectElement | null;
+                        if (zoneSelect && !zoneSelect.dataset.touched) zoneSelect.value = guessZoneFromAddress(e.target.value);
+                      }}
+                    />
                     <input name="city" placeholder="Ciudad" className="border rounded-md px-2 py-1.5" />
-                    <input name="zone" placeholder="Zona (ej. Norte, Sur)" className="border rounded-md px-2 py-1.5" />
+                    <select name="zone" defaultValue="" className="border rounded-md px-2 py-1.5" onChange={(e) => { e.currentTarget.dataset.touched = "1"; }}>
+                      <option value="">Zona (sin definir)</option>
+                      {ZONES.map((z) => <option key={z} value={z}>{z}</option>)}
+                    </select>
                     <button type="submit" className="bg-pink-600 text-white rounded-md px-3 py-1.5 col-span-2">
                       Guardar dirección
                     </button>
@@ -577,7 +638,9 @@ export default function ClienteDetail() {
             )}
             <div className="bg-white rounded-lg border p-3 text-center">
               <p className="text-xs text-gray-500 uppercase">Calificación promedio</p>
-              <p className="text-lg font-semibold">{avgRating != null ? avgRating.toFixed(1) : "—"}</p>
+              <p className="text-lg font-semibold">
+                {avgRating != null ? <Stars value={avgRating} /> : "—"}
+              </p>
             </div>
           </div>
 
@@ -586,15 +649,28 @@ export default function ClienteDetail() {
               <span className="flex-1">Factura</span>
               <span className="w-32">Fecha</span>
               <span className="w-32">Estado</span>
-              <span className="w-28 text-right">Total</span>
+              <span className="w-24">Calificación</span>
+              <span className="w-24 text-right">Total</span>
+              <span className="w-28 text-right">Acción</span>
             </div>
             {orders.map((o) => (
-              <Link key={o.id} to={`/pedidos/${o.id}`} className="p-3 flex flex-col sm:flex-row sm:items-center text-sm hover:bg-pink-50">
-                <span className="flex-1 font-mono">{o.invoiceNumber}</span>
+              <div key={o.id} className="p-3 flex flex-col sm:flex-row sm:items-center text-sm hover:bg-pink-50 gap-1">
+                <Link to={`/pedidos/${o.id}`} className="flex-1 font-mono hover:underline">
+                  {o.invoiceNumber}
+                </Link>
                 <span className="w-32 text-gray-500">{new Date(o.createdAt).toLocaleDateString()}</span>
                 <span className="w-32 text-gray-500">{STATUS_LABEL[o.status] ?? o.status}</span>
-                <span className="w-28 sm:text-right">{money(Number(o.total))}</span>
-              </Link>
+                <span className="w-24">{o.rating != null ? <Stars value={o.rating} /> : "—"}</span>
+                <span className="w-24 sm:text-right">{money(Number(o.total))}</span>
+                <span className="w-28 sm:text-right">
+                  <Link
+                    to={`/pedidos/nuevo?repeatId=${o.id}`}
+                    className="text-xs border rounded-md px-2 py-1 hover:bg-gray-50"
+                  >
+                    Repetir pedido
+                  </Link>
+                </span>
+              </div>
             ))}
             {orders.length === 0 && <p className="p-3 text-sm text-gray-500">Sin pedidos todavía.</p>}
           </div>

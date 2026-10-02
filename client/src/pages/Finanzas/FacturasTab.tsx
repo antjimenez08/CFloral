@@ -2,6 +2,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Expense, RecordType } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { money } from "../../lib/labels";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type ExpenseSortKey = "date" | "type" | "category" | "amount";
 
 const typeLabel: Record<RecordType, string> = { GASTO: "Gasto", COSTO: "Costo", INVERSION: "Inversión", OTRO: "Otro" };
 const typeToListKey: Record<RecordType, string> = {
@@ -18,8 +21,15 @@ export default function FacturasTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ type: "GASTO" as RecordType, category: "", description: "", amount: "", date: new Date().toISOString().slice(0, 10) });
   const [typeFilter, setTypeFilter] = useState<RecordType | "">("");
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<ExpenseSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  function onSort(key: ExpenseSortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
 
   function load() {
     if (!currentStoreId) return;
@@ -29,7 +39,21 @@ export default function FacturasTab() {
   useEffect(load, [currentStoreId]);
 
   const categories = lists[typeToListKey[form.type]] ?? [];
-  const filtered = useMemo(() => expenses.filter((e) => !typeFilter || e.type === typeFilter).sort((a, b) => b.date.localeCompare(a.date)), [expenses, typeFilter]);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    let list = expenses.filter((e) => !typeFilter || e.type === typeFilter);
+    if (term) {
+      list = list.filter(
+        (e) => e.category.toLowerCase().includes(term) || (e.description ?? "").toLowerCase().includes(term)
+      );
+    }
+    const key = sortKey ?? "date";
+    const dir = sortKey ? sortDir : "desc";
+    return [...list].sort((a, b) => {
+      const cmp = key === "amount" ? Number(a.amount) - Number(b.amount) : compareValues(a[key], b[key]);
+      return dir === "asc" ? cmp : -cmp;
+    });
+  }, [expenses, typeFilter, search, sortKey, sortDir]);
 
   function startEdit(e: Expense) {
     setEditingId(e.id);
@@ -98,21 +122,29 @@ export default function FacturasTab() {
         </form>
       </div>
 
-      <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as RecordType | "")} className="border rounded-md px-2 py-1 text-sm">
-        <option value="">Todos los tipos</option>
-        {Object.entries(typeLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-      </select>
+      <div className="flex flex-wrap gap-2">
+        <input
+          placeholder="Buscar por categoría o descripción..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[200px] border rounded-md px-2 py-1 text-sm"
+        />
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as RecordType | "")} className="border rounded-md px-2 py-1 text-sm">
+          <option value="">Todos los tipos</option>
+          {Object.entries(typeLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
 
-      <div className="bg-white border rounded-lg divide-y">
-        <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase">
-          <span className="w-28">Fecha</span>
-          <span className="w-24">Tipo</span>
-          <span className="flex-1">Categoría / Descripción</span>
-          <span className="w-32 text-right">Valor</span>
+      <div className="bg-white border rounded-lg divide-y overflow-x-auto">
+        <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[640px]">
+          <span className="w-28"><SortHeader label="Fecha" sortKey="date" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-24"><SortHeader label="Tipo" sortKey="type" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="flex-1"><SortHeader label="Categoría / Descripción" sortKey="category" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-32 text-right"><SortHeader label="Valor" sortKey="amount" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
           <span className="w-20"></span>
         </div>
         {filtered.map((e) => (
-          <div key={e.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm">
+          <div key={e.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm min-w-[640px]">
             <span className="w-28 text-gray-500">{new Date(e.date).toLocaleDateString("es-CO")}</span>
             <span className="w-24">{typeLabel[e.type]}</span>
             <span className="flex-1">{e.category}{e.description ? ` — ${e.description}` : ""}</span>

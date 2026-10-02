@@ -2,6 +2,9 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Product, Supply } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { resizeImageFile } from "../../lib/imageResize";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type ProductSortKey = "name" | "category" | "unitPrice" | "costPrice" | "stock";
 
 const money = (n: number) =>
   n.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -38,6 +41,13 @@ export default function ProductosTab() {
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<ProductSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function onSort(key: ProductSortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -234,7 +244,7 @@ export default function ProductosTab() {
         lowStockThreshold: Number(form.lowStockThreshold) || 5,
         reorderQuantity: form.reorderQuantity ? Number(form.reorderQuantity) : undefined,
         shelfLifeDays: form.shelfLifeDays ? Number(form.shelfLifeDays) : undefined,
-        coverPhoto: coverPhoto || undefined,
+        coverPhoto: editingId ? (coverPhoto === null ? null : coverPhoto || undefined) : coverPhoto || undefined,
         photos,
         recipe: recipe
           .filter((r) => r.supplyId && Number(r.quantity) > 0)
@@ -264,13 +274,35 @@ export default function ProductosTab() {
     }
   }
 
+  async function unlinkProduct() {
+    if (!editingId) return;
+    await api.post(`/products/${editingId}/unlink`);
+    setExistingLinkedStoreIds([]);
+    setSelectedStoreIds([]);
+    loadProducts();
+  }
+
   const filterOptions = useMemo(() => {
     const set = new Set<string>(categories);
     products.forEach((p) => p.category && set.add(p.category));
     return Array.from(set);
   }, [categories, products]);
 
-  const filtered = categoryFilter ? products.filter((p) => p.category === categoryFilter) : products;
+  const filtered = useMemo(() => {
+    let list = categoryFilter ? products.filter((p) => p.category === categoryFilter) : products;
+    const term = search.trim().toLowerCase();
+    if (term) list = list.filter((p) => p.name.toLowerCase().includes(term));
+    if (sortKey) {
+      const numeric = sortKey === "unitPrice" || sortKey === "costPrice" || sortKey === "stock";
+      list = [...list].sort((a, b) => {
+        const av = a[sortKey as keyof Product];
+        const bv = b[sortKey as keyof Product];
+        const cmp = numeric ? Number(av ?? 0) - Number(bv ?? 0) : compareValues(av, bv);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [products, categoryFilter, search, sortKey, sortDir]);
   const otherStores = stores.filter((s) => s.id !== currentStoreId && s.active);
 
   return (
@@ -437,6 +469,16 @@ export default function ProductosTab() {
                   );
                 })}
               </div>
+              {existingLinkedStoreIds.length > 0 && (
+                <div className="mt-2">
+                  <button type="button" onClick={unlinkProduct} className="text-xs text-red-600 hover:underline">
+                    Desvincular de las demás tiendas
+                  </button>
+                  <p className="text-xs text-gray-400">
+                    Esta copia dejará de sincronizarse con las demás (seguirá existiendo en esta tienda).
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -521,26 +563,34 @@ export default function ProductosTab() {
         </form>
       )}
 
-      {filterOptions.length > 0 && (
-        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="border rounded-md px-3 py-2 text-sm">
-          <option value="">Todas las categorías</option>
-          {filterOptions.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      )}
+      <div className="flex flex-wrap gap-2">
+        <input
+          placeholder="Buscar producto..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[180px] border rounded-md px-3 py-2 text-sm"
+        />
+        {filterOptions.length > 0 && (
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="border rounded-md px-3 py-2 text-sm">
+            <option value="">Todas las categorías</option>
+            {filterOptions.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
       <div className="bg-white rounded-lg border divide-y overflow-x-auto">
         <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[640px]">
           <span className="w-12"></span>
-          <span className="flex-1">Producto</span>
-          <span className="w-28">Categoría</span>
-          <span className="w-24 text-right">Precio</span>
-          {canCosto && <span className="w-24 text-right">Costo</span>}
+          <span className="flex-1"><SortHeader label="Producto" sortKey="name" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-28"><SortHeader label="Categoría" sortKey="category" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-24 text-right"><SortHeader label="Precio" sortKey="unitPrice" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
+          {canCosto && <span className="w-24 text-right"><SortHeader label="Costo" sortKey="costPrice" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>}
           {canCosto && <span className="w-20 text-right">Margen</span>}
-          <span className="w-16 text-right">Stock</span>
+          <span className="w-16 text-right"><SortHeader label="Stock" sortKey="stock" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
         </div>
         {filtered.map((p) => {
           const low = p.stock <= p.lowStockThreshold;

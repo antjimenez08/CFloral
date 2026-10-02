@@ -2,13 +2,46 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Customer, CustomerSpecialDate, Persona } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
+import ZoneField from "../../components/ZoneField";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type CustomerSortKey = "name" | "phone" | "documentId" | "lifetimeValue";
+
+const MONTHS = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+interface AddressDraft {
+  label: string;
+  address: string;
+  city: string;
+  zone: string;
+}
+
+interface SpecialDateDraft {
+  label: string;
+  month: number;
+  day: number;
+}
 
 const money = (n: number) =>
   Number(n).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-interface UpcomingSpecialDate extends CustomerSpecialDate {
+interface SpecialDateSuggestion extends CustomerSpecialDate {
   daysUntil: number;
   persona: Persona & { customer: Customer };
+}
+
+interface HabitSuggestion {
+  customer: Customer;
+  daysSinceLast: number;
+  avgIntervalDays: number;
+}
+
+interface ContactSuggestions {
+  specialDates: SpecialDateSuggestion[];
+  habitual: HabitSuggestion[];
 }
 
 interface ListsResponse {
@@ -18,10 +51,9 @@ interface ListsResponse {
   [key: string]: unknown;
 }
 
-interface Suggestion {
-  key: string;
-  text: string;
-  customerId: string;
+function waHref(phone: string | null, text: string): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
 export default function ClientesList() {
@@ -29,11 +61,25 @@ export default function ClientesList() {
   const sensible = can("clientesSensible");
 
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
-  const [upcoming, setUpcoming] = useState<UpcomingSpecialDate[]>([]);
+  const [suggestions, setSuggestions] = useState<ContactSuggestions>({ specialDates: [], habitual: [] });
   const [lists, setLists] = useState<ListsResponse>({});
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [sortKey, setSortKey] = useState<CustomerSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function onSort(key: CustomerSortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
+
+  const visibleCustomers = useMemo(() => {
+    if (!sortKey) return customers;
+    const numeric = sortKey === "lifetimeValue";
+    return [...customers].sort((a, b) => {
+      const cmp = numeric ? Number(a[sortKey]) - Number(b[sortKey]) : compareValues(a[sortKey], b[sortKey]);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [customers, sortKey, sortDir]);
 
   // Nuevo cliente form state
   const [name, setName] = useState("");
@@ -47,10 +93,15 @@ export default function ClientesList() {
   const [emails, setEmails] = useState<string[]>([]);
   const [newEmail, setNewEmail] = useState("");
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  const [addresses, setAddresses] = useState<AddressDraft[]>([]);
   const [addrLabel, setAddrLabel] = useState("");
   const [addrAddress, setAddrAddress] = useState("");
   const [addrCity, setAddrCity] = useState("");
   const [addrZone, setAddrZone] = useState("");
+  const [specialDates, setSpecialDates] = useState<SpecialDateDraft[]>([]);
+  const [sdLabel, setSdLabel] = useState("");
+  const [sdMonth, setSdMonth] = useState(1);
+  const [sdDay, setSdDay] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -65,42 +116,14 @@ export default function ClientesList() {
 
   useEffect(() => {
     api
-      .get<Customer[]>("/customers")
-      .then((res) => setAllCustomers(res.data))
-      .catch(() => {});
-    api
-      .get<UpcomingSpecialDate[]>("/customers/special-dates/upcoming", { params: { days: 21 } })
-      .then((res) => setUpcoming(res.data))
+      .get<ContactSuggestions>("/customers/contact-suggestions", { params: { days: 21 } })
+      .then((res) => setSuggestions(res.data))
       .catch(() => {});
     api
       .get<ListsResponse>("/lists")
       .then((res) => setLists(res.data))
       .catch(() => {});
   }, []);
-
-  const suggestions = useMemo<Suggestion[]>(() => {
-    const dateSugs: Suggestion[] = upcoming
-      .slice()
-      .sort((a, b) => a.daysUntil - b.daysUntil)
-      .map((d) => ({
-        key: `date-${d.id}`,
-        text: `${d.persona.name} (${d.label}) — ${d.daysUntil === 0 ? "hoy" : `en ${d.daysUntil} días`}`,
-        customerId: d.persona.customer.id,
-      }));
-
-    const now = Date.now();
-    const inactiveSugs: Suggestion[] = allCustomers
-      .filter((c) => c.ordersCount >= 2 && c.lastOrderAt && (now - new Date(c.lastOrderAt).getTime()) / 86400000 > 45)
-      .map((c) => ({ c, days: Math.floor((now - new Date(c.lastOrderAt as string).getTime()) / 86400000) }))
-      .sort((a, b) => b.days - a.days)
-      .map(({ c, days }) => ({
-        key: `inactive-${c.id}`,
-        text: `${c.name} — posible cliente inactivo, contactar (última compra hace ${days} días)`,
-        customerId: c.id,
-      }));
-
-    return [...dateSugs, ...inactiveSugs].slice(0, 8);
-  }, [upcoming, allCustomers]);
 
   function resetForm() {
     setName("");
@@ -114,10 +137,43 @@ export default function ClientesList() {
     setEmails([]);
     setNewEmail("");
     setPaymentMethods([]);
+    setAddresses([]);
     setAddrLabel("");
     setAddrAddress("");
     setAddrCity("");
     setAddrZone("");
+    setSpecialDates([]);
+    setSdLabel("");
+    setSdMonth(1);
+    setSdDay(1);
+  }
+
+  function addAddress() {
+    if (!addrAddress.trim()) return;
+    setAddresses((prev) => [
+      ...prev,
+      { label: addrLabel.trim() || "Principal", address: addrAddress.trim(), city: addrCity.trim(), zone: addrZone },
+    ]);
+    setAddrLabel("");
+    setAddrAddress("");
+    setAddrCity("");
+    setAddrZone("");
+  }
+
+  function removeAddress(idx: number) {
+    setAddresses((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function addSpecialDate() {
+    if (!sdLabel.trim()) return;
+    setSpecialDates((prev) => [...prev, { label: sdLabel.trim(), month: sdMonth, day: sdDay }]);
+    setSdLabel("");
+    setSdMonth(1);
+    setSdDay(1);
+  }
+
+  function removeSpecialDate(idx: number) {
+    setSpecialDates((prev) => prev.filter((_, i) => i !== idx));
   }
 
   function addEmail() {
@@ -139,16 +195,22 @@ export default function ClientesList() {
     e.preventDefault();
     setError(null);
     try {
-      const addresses = addrAddress.trim()
-        ? [
-            {
-              label: addrLabel.trim() || "Principal",
-              address: addrAddress.trim(),
-              city: addrCity.trim() || undefined,
-              zone: addrZone.trim() || undefined,
-            },
-          ]
-        : undefined;
+      const allAddresses = [
+        ...addresses,
+        ...(addrAddress.trim()
+          ? [{ label: addrLabel.trim() || "Principal", address: addrAddress.trim(), city: addrCity.trim(), zone: addrZone }]
+          : []),
+      ].map((a, idx) => ({
+        label: a.label,
+        address: a.address,
+        city: a.city || undefined,
+        zone: a.zone || undefined,
+        isDefault: idx === 0,
+      }));
+      const allSpecialDates = [
+        ...specialDates,
+        ...(sdLabel.trim() ? [{ label: sdLabel.trim(), month: sdMonth, day: sdDay }] : []),
+      ];
       await api.post("/customers", {
         name,
         phone: phone || undefined,
@@ -160,7 +222,8 @@ export default function ClientesList() {
         tags: tags || undefined,
         emails,
         paymentMethods,
-        addresses,
+        addresses: allAddresses.length ? allAddresses : undefined,
+        specialDates: allSpecialDates.length ? allSpecialDates : undefined,
       });
       resetForm();
       setShowForm(false);
@@ -185,18 +248,78 @@ export default function ClientesList() {
         </button>
       </div>
 
-      {suggestions.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
+      {(suggestions.specialDates.length > 0 || suggestions.habitual.length > 0) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
           <h2 className="text-sm font-semibold text-amber-900">¿A quién debo contactar?</h2>
-          <ul className="space-y-1">
-            {suggestions.map((s) => (
-              <li key={s.key} className="text-sm text-amber-900">
-                <Link to={`/clientes/${s.customerId}`} className="hover:underline">
-                  {s.text}
-                </Link>
-              </li>
-            ))}
-          </ul>
+
+          {suggestions.specialDates.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-amber-800 uppercase">Fechas especiales próximas</p>
+              <ul className="space-y-1.5">
+                {suggestions.specialDates.map((d) => (
+                  <li key={d.id} className="flex items-center justify-between gap-2 text-sm text-amber-900">
+                    <Link to={`/clientes/${d.persona.customer.id}`} className="hover:underline">
+                      {d.persona.name} ({d.label}) — {d.daysUntil === 0 ? "hoy" : `en ${d.daysUntil} días`}
+                    </Link>
+                    <span className="flex gap-1 shrink-0">
+                      <a
+                        href={waHref(
+                          d.persona.customer.phone,
+                          `¡Hola ${d.persona.name}! Queremos recordarte que se acerca ${d.label.toLowerCase()} 🌸 ¿Te ayudamos con un detalle especial?`
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs border border-amber-300 rounded-md px-2 py-1 hover:bg-amber-100"
+                      >
+                        Contactar
+                      </a>
+                      <Link
+                        to={`/pedidos/nuevo?customerId=${d.persona.customer.id}`}
+                        className="text-xs border border-amber-300 rounded-md px-2 py-1 hover:bg-amber-100"
+                      >
+                        Pedido
+                      </Link>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {suggestions.habitual.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-amber-800 uppercase">Según su hábito de compra</p>
+              <ul className="space-y-1.5">
+                {suggestions.habitual.map((h) => (
+                  <li key={h.customer.id} className="flex items-center justify-between gap-2 text-sm text-amber-900">
+                    <Link to={`/clientes/${h.customer.id}`} className="hover:underline flex items-center gap-2">
+                      {h.customer.name} — suele comprar cada {h.avgIntervalDays} días, última compra hace {h.daysSinceLast} días
+                      <span className="text-xs bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">Inactivo</span>
+                    </Link>
+                    <span className="flex gap-1 shrink-0">
+                      <a
+                        href={waHref(
+                          h.customer.phone,
+                          `¡Hola ${h.customer.name}! Hace tiempo no te enviamos flores 🌸 ¿Te gustaría hacer un pedido?`
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs border border-amber-300 rounded-md px-2 py-1 hover:bg-amber-100"
+                      >
+                        Contactar
+                      </a>
+                      <Link
+                        to={`/pedidos/nuevo?customerId=${h.customer.id}`}
+                        className="text-xs border border-amber-300 rounded-md px-2 py-1 hover:bg-amber-100"
+                      >
+                        Pedido
+                      </Link>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -341,7 +464,24 @@ export default function ClientesList() {
           )}
 
           <div className="border-t pt-3">
-            <p className="text-sm font-medium mb-2">Dirección inicial (opcional)</p>
+            <p className="text-sm font-medium mb-2">Direcciones (opcional)</p>
+            {addresses.length > 0 && (
+              <ul className="space-y-1 mb-2">
+                {addresses.map((a, idx) => (
+                  <li key={idx} className="flex items-center justify-between text-sm bg-gray-50 border rounded-md px-2 py-1.5">
+                    <span>
+                      <strong>{a.label}:</strong> {a.address}
+                      {a.city ? `, ${a.city}` : ""}
+                      {a.zone ? ` (${a.zone})` : ""}
+                      {idx === 0 && addresses.length > 0 && <span className="ml-1 text-xs text-gray-500">— predeterminada</span>}
+                    </span>
+                    <button type="button" onClick={() => removeAddress(idx)} className="text-red-600 text-xs">
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <input
                 placeholder="Etiqueta (ej. Casa)"
@@ -361,12 +501,72 @@ export default function ClientesList() {
                 onChange={(e) => setAddrAddress(e.target.value)}
                 className="border rounded-md px-2 py-1.5 text-sm col-span-2"
               />
-              <input
-                placeholder="Zona (ej. Norte, Sur)"
-                value={addrZone}
-                onChange={(e) => setAddrZone(e.target.value)}
+              <ZoneField
+                zone={addrZone}
+                onZoneChange={setAddrZone}
+                address={addrAddress}
                 className="border rounded-md px-2 py-1.5 text-sm"
               />
+              <button
+                type="button"
+                onClick={addAddress}
+                className="bg-gray-100 text-sm rounded-md px-3 py-1.5 border"
+              >
+                + Agregar otra dirección
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t pt-3">
+            <p className="text-sm font-medium mb-2">Fechas especiales (opcional)</p>
+            {specialDates.length > 0 && (
+              <ul className="space-y-1 mb-2">
+                {specialDates.map((d, idx) => (
+                  <li key={idx} className="flex items-center justify-between text-sm bg-gray-50 border rounded-md px-2 py-1.5">
+                    <span>
+                      {d.label} — {MONTHS[d.month - 1]} {d.day}
+                    </span>
+                    <button type="button" onClick={() => removeSpecialDate(idx)} className="text-red-600 text-xs">
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              <input
+                placeholder="Ej. Cumpleaños"
+                value={sdLabel}
+                onChange={(e) => setSdLabel(e.target.value)}
+                className="border rounded-md px-2 py-1.5 text-sm col-span-2"
+              />
+              <select
+                value={sdMonth}
+                onChange={(e) => setSdMonth(Number(e.target.value))}
+                className="border rounded-md px-2 py-1.5 text-sm"
+              >
+                {MONTHS.map((m, idx) => (
+                  <option key={m} value={idx + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                placeholder="Día"
+                value={sdDay}
+                onChange={(e) => setSdDay(Number(e.target.value))}
+                className="border rounded-md px-2 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                onClick={addSpecialDate}
+                className="bg-gray-100 text-sm rounded-md px-3 py-1.5 border col-span-2"
+              >
+                + Agregar fecha
+              </button>
             </div>
           </div>
 
@@ -385,12 +585,12 @@ export default function ClientesList() {
 
       <div className="bg-white rounded-lg border divide-y">
         <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase">
-          <span className="flex-1">Nombre</span>
-          <span className="w-32">Teléfono</span>
-          {sensible && <span className="w-36">Documento</span>}
-          {sensible && <span className="w-28 text-right">Valor total</span>}
+          <span className="flex-1"><SortHeader label="Nombre" sortKey="name" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-32"><SortHeader label="Teléfono" sortKey="phone" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          {sensible && <span className="w-36"><SortHeader label="Documento" sortKey="documentId" active={sortKey} dir={sortDir} onClick={onSort} /></span>}
+          {sensible && <span className="w-28 text-right"><SortHeader label="Valor total" sortKey="lifetimeValue" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>}
         </div>
-        {customers.map((c) => (
+        {visibleCustomers.map((c) => (
           <Link
             key={c.id}
             to={`/clientes/${c.id}`}
@@ -407,7 +607,7 @@ export default function ClientesList() {
             {sensible && <span className="w-28 sm:text-right text-gray-500">{money(Number(c.lifetimeValue))}</span>}
           </Link>
         ))}
-        {customers.length === 0 && <p className="p-4 text-sm text-gray-500">Sin clientes todavía.</p>}
+        {visibleCustomers.length === 0 && <p className="p-4 text-sm text-gray-500">Sin clientes todavía.</p>}
       </div>
     </div>
   );

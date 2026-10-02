@@ -116,6 +116,15 @@ export interface EmployeeUser {
   createdAt: string;
 }
 
+// Directorio básico de empleados activos (sin datos sensibles), para selects que cualquier
+// rol necesita usar: domiciliario en Despachos, empleado en Pagos, admin/vendedor en Sedes.
+export interface DirectoryUser {
+  id: string;
+  name: string;
+  position: string | null;
+  storeId: string | null;
+}
+
 export interface Jornada {
   id: string;
   name: string;

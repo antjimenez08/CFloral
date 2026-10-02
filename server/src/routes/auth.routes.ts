@@ -4,8 +4,23 @@ import { z } from "zod";
 import { signToken } from "../lib/auth";
 import { prisma } from "../lib/prisma";
 import { defaultPermissions, PERMISSION_MODULES } from "../lib/permissions";
+import { requireAuth } from "../middleware/requireAuth";
+import { AppRole } from "../lib/auth";
 
 export const authRouter = Router();
+
+async function permissionsForRole(role: AppRole): Promise<Record<string, boolean>> {
+  const defaults = defaultPermissions();
+  const rows = await prisma.rolePermission.findMany();
+  const permissions: Record<string, boolean> = { ...defaults[role] };
+  for (const row of rows) {
+    if (row.role === role) permissions[row.key] = row.allowed;
+  }
+  if (role === "ADMIN") {
+    for (const key of PERMISSION_MODULES) permissions[key] = true;
+  }
+  return permissions;
+}
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -30,18 +45,34 @@ authRouter.post("/login", async (req, res) => {
   }
 
   const token = signToken({ userId: user.id, role: user.role, storeId: user.storeId });
-  const defaults = defaultPermissions();
-  const rows = await prisma.rolePermission.findMany();
-  const permissions: Record<string, boolean> = { ...defaults[user.role] };
-  for (const row of rows) {
-    if (row.role === user.role) permissions[row.key] = row.allowed;
-  }
-  if (user.role === "ADMIN") {
-    for (const key of PERMISSION_MODULES) permissions[key] = true;
-  }
+  const permissions = await permissionsForRole(user.role);
 
   res.json({
     token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      storeId: user.storeId,
+      storeName: user.store?.name ?? null,
+      phone: user.phone,
+      position: user.position,
+    },
+    permissions,
+  });
+});
+
+/// Datos y permisos actuales del usuario autenticado, recalculados desde la base de datos.
+/// El cliente la consulta al cargar/enfocar la app para reflejar cambios de permisos sin
+/// necesidad de cerrar sesión (el login solo trae una foto inicial de los permisos).
+authRouter.get("/me", requireAuth, async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { store: true } });
+  if (!user || !user.active || !user.hasSystemAccess) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const permissions = await permissionsForRole(user.role);
+  res.json({
     user: {
       id: user.id,
       name: user.name,

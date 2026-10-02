@@ -21,6 +21,11 @@ listsRouter.get("/", async (_req, res) => {
     if (!grouped[option.listKey]) grouped[option.listKey] = [];
     grouped[option.listKey].push(option.value);
   }
+  // Las listas desplegables se muestran en orden alfabético en toda la app (como en el
+  // mockup), no en el orden en que se fueron agregando.
+  for (const key of Object.keys(grouped)) {
+    grouped[key].sort((a, b) => a.localeCompare(b, "es"));
+  }
   const occasions = Array.from(new Set(templates.map((t) => t.occasion))).sort((a, b) =>
     a.localeCompare(b, "es")
   );
@@ -47,18 +52,21 @@ const cardMessageSchema = z.object({
   message: z.string().min(1),
 });
 
-listsRouter.post("/card-messages", requirePermission("listas"), async (req, res) => {
+// Guardar un mensaje como "recomendado" es parte de armar un pedido (no de administrar
+// listas): lo puede hacer cualquiera que pueda crear pedidos, igual que en el mockup.
+listsRouter.post("/card-messages", requirePermission("pedidos"), async (req, res) => {
   const parsed = cardMessageSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: zodMessage(parsed.error) });
   }
   const { occasion, message } = parsed.data;
-  const max = await prisma.cardMessageTemplate.aggregate({
-    where: { occasion },
-    _max: { sortOrder: true },
-  });
+  const siblings = await prisma.cardMessageTemplate.findMany({ where: { occasion } });
+  const existing = siblings.find((t) => t.message.trim().toLowerCase() === message.trim().toLowerCase());
+  if (existing) return res.status(200).json({ ...existing, alreadyExisted: true });
+
+  const max = siblings.reduce((m, t) => Math.max(m, t.sortOrder), 0);
   const template = await prisma.cardMessageTemplate.create({
-    data: { occasion, message, sortOrder: (max._max.sortOrder ?? 0) + 1 },
+    data: { occasion, message, sortOrder: max + 1 },
   });
   res.status(201).json(template);
 });

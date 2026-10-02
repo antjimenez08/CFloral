@@ -3,6 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, Order, OrderStatus, PAY_LABEL, STATUS_LABEL } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { money, orderStatusColor, paymentStatusColor } from "../../lib/labels";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type OrderSortKey = "invoiceNumber" | "customerName" | "status" | "total";
 
 function surveyMissingFields(o: Order): boolean {
   if (!o.surveySelected) return false;
@@ -16,6 +19,12 @@ export default function PedidosList() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "">("");
   const [payFilter, setPayFilter] = useState<Order["paymentStatus"] | "">("");
+  const [sortKey, setSortKey] = useState<OrderSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function onSort(key: OrderSortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
 
   function load() {
     if (!currentStoreId) return;
@@ -26,7 +35,7 @@ export default function PedidosList() {
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return orders
+    let list = orders
       .filter((o) => !statusFilter || o.status === statusFilter)
       .filter((o) => !payFilter || o.paymentStatus === payFilter)
       .filter(
@@ -35,7 +44,16 @@ export default function PedidosList() {
           o.invoiceNumber.toLowerCase().includes(term) ||
           o.customer.name.toLowerCase().includes(term)
       );
-  }, [orders, search, statusFilter, payFilter]);
+    if (sortKey) {
+      list = [...list].sort((a, b) => {
+        const av = sortKey === "customerName" ? a.customer.name : sortKey === "total" ? Number(a.total) : a[sortKey];
+        const bv = sortKey === "customerName" ? b.customer.name : sortKey === "total" ? Number(b.total) : b[sortKey];
+        const cmp = sortKey === "total" ? (av as number) - (bv as number) : compareValues(av, bv);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [orders, search, statusFilter, payFilter, sortKey, sortDir]);
 
   async function repeat(o: Order) {
     navigate(`/pedidos/nuevo?repeatId=${o.id}`);
@@ -75,12 +93,12 @@ export default function PedidosList() {
 
       <div className="bg-white rounded-lg border divide-y">
         <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase">
-          <span className="w-28">Pedido</span>
-          <span className="flex-1">Cliente</span>
+          <span className="w-28"><SortHeader label="Pedido" sortKey="invoiceNumber" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="flex-1"><SortHeader label="Cliente" sortKey="customerName" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="flex-1">Enviado a</span>
-          <span className="w-32">Estado</span>
+          <span className="w-32"><SortHeader label="Estado" sortKey="status" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="w-28">Pago</span>
-          <span className="w-24 text-right">Total</span>
+          <span className="w-24 text-right"><SortHeader label="Total" sortKey="total" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
           <span className="w-40"></span>
         </div>
         {filtered.map((o) => (

@@ -71,7 +71,7 @@ const productSchema = z.object({
   shelfLifeDays: z.number().int().positive().optional(),
   receivedAt: z.string().datetime().optional().or(z.literal("")),
   groupId: z.string().optional(),
-  coverPhoto: z.string().optional(),
+  coverPhoto: z.string().nullable().optional(),
   photos: z.array(z.string()).optional(),
   recipe: z.array(recipeItemSchema).optional(),
 });
@@ -101,6 +101,10 @@ productsRouter.post("/", async (req, res) => {
   res.status(201).json(product);
 });
 
+/// Campos que describen el producto en sí (no la existencia de esta tienda puntual:
+/// precio, costo, stock, receta, etc. quedan fuera y se mantienen independientes por tienda).
+const SHARED_PRODUCT_FIELDS = ["name", "description", "category", "color", "tags", "unit", "coverPhoto", "photos"] as const;
+
 productsRouter.put("/:id", async (req, res) => {
   const parsed = productSchema.partial().safeParse(req.body);
   if (!parsed.success) {
@@ -120,7 +124,37 @@ productsRouter.put("/:id", async (req, res) => {
     },
     include: { recipe: { include: { supply: true } } },
   });
+
+  // Sincroniza los datos compartidos del producto (nombre, foto, categoría...) hacia las
+  // demás tiendas donde está vinculado, para que editar cualquiera de las copias actualice
+  // a todas — igual que el mockup, donde un producto multi-tienda es "el mismo producto".
+  if (product.groupId) {
+    const sharedUpdate: Record<string, unknown> = {};
+    for (const key of SHARED_PRODUCT_FIELDS) {
+      if (key in rest) sharedUpdate[key] = (rest as Record<string, unknown>)[key];
+    }
+    if (photos !== undefined) sharedUpdate.photos = photos;
+    if (Object.keys(sharedUpdate).length > 0) {
+      await prisma.product.updateMany({
+        where: { groupId: product.groupId, id: { not: product.id } },
+        data: sharedUpdate,
+      });
+    }
+  }
+
   res.json(product);
+});
+
+/// Desvincula esta copia del producto de sus hermanas en otras tiendas: a partir de ahora
+/// editarla no sincroniza ni se ve afectada por los cambios de las demás.
+productsRouter.post("/:id/unlink", async (req, res) => {
+  const product = await prisma.product.findUnique({ where: { id: req.params.id } });
+  if (!product) return res.status(404).json({ error: "Producto no encontrado" });
+  const updated = await prisma.product.update({
+    where: { id: req.params.id },
+    data: { groupId: req.params.id },
+  });
+  res.json(updated);
 });
 
 /// Disponibilidad multi-tienda: crea una copia independiente de este producto

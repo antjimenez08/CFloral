@@ -1,6 +1,9 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Supplier } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
+
+type SortKey = "name" | "contactName" | "categories" | "paymentTerms" | "leadTimeDays" | "rating";
 
 const emptyForm = {
   name: "",
@@ -37,6 +40,34 @@ function ProveedoresTabInner() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function onSort(key: SortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
+
+  const visibleSuppliers = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    let list = suppliers;
+    if (term) {
+      list = list.filter(
+        (s) =>
+          s.name.toLowerCase().includes(term) ||
+          (s.contactName ?? "").toLowerCase().includes(term) ||
+          (s.city ?? "").toLowerCase().includes(term) ||
+          (s.categories ?? "").toLowerCase().includes(term)
+      );
+    }
+    if (sortKey) {
+      list = [...list].sort((a, b) => {
+        const cmp = compareValues(a[sortKey], b[sortKey]);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [suppliers, search, sortKey, sortDir]);
 
   async function load() {
     const res = await api.get<Supplier[]>("/suppliers");
@@ -231,17 +262,24 @@ function ProveedoresTabInner() {
         </form>
       )}
 
+      <input
+        placeholder="Buscar por nombre, contacto, ciudad o categoría..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full max-w-md border rounded-md px-3 py-2 text-sm"
+      />
+
       <div className="bg-white rounded-lg border divide-y overflow-x-auto">
         <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[720px]">
-          <span className="flex-1">Proveedor</span>
-          <span className="w-40">Contacto</span>
-          <span className="w-32">Suministra</span>
-          <span className="w-28">Pago</span>
-          <span className="w-16 text-center">Entrega</span>
-          <span className="w-24">Calificación</span>
+          <span className="flex-1"><SortHeader label="Proveedor" sortKey="name" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-40"><SortHeader label="Contacto" sortKey="contactName" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-32"><SortHeader label="Suministra" sortKey="categories" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-28"><SortHeader label="Pago" sortKey="paymentTerms" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-16 text-center"><SortHeader label="Entrega" sortKey="leadTimeDays" active={sortKey} dir={sortDir} onClick={onSort} className="justify-center" /></span>
+          <span className="w-24"><SortHeader label="Calificación" sortKey="rating" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="w-24 text-right">Estado</span>
         </div>
-        {suppliers.map((s) => (
+        {visibleSuppliers.map((s) => (
           <div key={s.id} className="p-3 flex flex-col sm:flex-row sm:items-center text-sm gap-1 sm:gap-0 min-w-[720px]">
             <span className="flex-1 cursor-pointer" onClick={() => openEdit(s)}>
               <span className="font-medium">{s.name}</span>
@@ -267,7 +305,7 @@ function ProveedoresTabInner() {
             </span>
           </div>
         ))}
-        {suppliers.length === 0 && <p className="p-4 text-sm text-gray-500">Sin proveedores registrados.</p>}
+        {visibleSuppliers.length === 0 && <p className="p-4 text-sm text-gray-500">Sin proveedores registrados.</p>}
       </div>
     </div>
   );

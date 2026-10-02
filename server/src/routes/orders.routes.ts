@@ -11,6 +11,14 @@ ordersRouter.use(requireAuth);
 const orderStatus = z.enum(["PENDING", "IN_PROGRESS", "READY", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"]);
 const paymentStatus = z.enum(["UNPAID", "PARTIAL", "PAID"]);
 
+/// null o "" significan "borrar la fecha programada" (se envían a propósito); sin el campo
+/// en el body, el valor es undefined y Prisma deja la fecha como estaba.
+function deliveryDateUpdate(value: string | null | undefined): Date | null | undefined {
+  if (value === null || value === "") return null;
+  if (value === undefined) return undefined;
+  return new Date(value);
+}
+
 const orderInclude = {
   customer: true,
   recipientPersona: { include: { addresses: true } },
@@ -48,26 +56,26 @@ ordersRouter.get("/:id", async (req, res) => {
 const orderFieldsSchema = z.object({
   storeId: z.string().min(1),
   customerId: z.string().min(1),
-  recipientPersonaId: z.string().optional(),
-  recipientName: z.string().optional(),
-  recipientPhone: z.string().optional(),
-  deliveryAddress: z.string().optional(),
-  deliveryCity: z.string().optional(),
-  deliveryDate: z.string().datetime().optional().or(z.literal("")),
-  scheduledShift: z.string().optional(),
-  scheduledHour: z.string().optional(),
-  deliveryPersonId: z.string().optional(),
+  recipientPersonaId: z.string().nullable().optional(),
+  recipientName: z.string().nullable().optional(),
+  recipientPhone: z.string().nullable().optional(),
+  deliveryAddress: z.string().nullable().optional(),
+  deliveryCity: z.string().nullable().optional(),
+  deliveryDate: z.string().datetime().optional().or(z.literal("")).nullable(),
+  scheduledShift: z.string().nullable().optional(),
+  scheduledHour: z.string().nullable().optional(),
+  deliveryPersonId: z.string().nullable().optional(),
   isThirdPartyDelivery: z.boolean().optional(),
-  thirdPartyDriverName: z.string().optional(),
-  thirdPartyPlate: z.string().optional(),
-  notes: z.string().optional(),
-  paymentMethod: z.string().optional(),
-  occasion: z.string().optional(),
-  cardMessage: z.string().optional(),
-  assignedToId: z.string().optional(),
+  thirdPartyDriverName: z.string().nullable().optional(),
+  thirdPartyPlate: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  paymentMethod: z.string().nullable().optional(),
+  occasion: z.string().nullable().optional(),
+  cardMessage: z.string().nullable().optional(),
+  assignedToId: z.string().nullable().optional(),
   discount: z.number().nonnegative().optional(),
   deliveryFee: z.number().nonnegative().optional(),
-  externalReference: z.string().optional(),
+  externalReference: z.string().nullable().optional(),
   items: z
     .array(z.object({ productId: z.string().min(1), quantity: z.number().int().positive() }))
     .min(1),
@@ -137,7 +145,7 @@ ordersRouter.post("/", async (req, res) => {
           storeId,
           customerId,
           createdById: req.auth!.userId,
-          deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+          deliveryDate: deliveryDateUpdate(deliveryDate),
           subtotal,
           discount: discountAmount,
           deliveryFee: deliveryFeeAmount,
@@ -221,7 +229,7 @@ ordersRouter.put("/:id", async (req, res) => {
           ...rest,
           storeId,
           customerId,
-          deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+          deliveryDate: deliveryDateUpdate(deliveryDate),
           subtotal,
           discount: discountAmount,
           deliveryFee: deliveryFeeAmount,
@@ -262,20 +270,20 @@ async function runSurveySelection() {
 const updateOrderSchema = z.object({
   status: orderStatus.optional(),
   paymentStatus: paymentStatus.optional(),
-  assignedToId: z.string().optional(),
+  assignedToId: z.string().nullable().optional(),
   rating: z.number().int().min(1).max(5).optional(),
-  ratingComment: z.string().optional(),
+  ratingComment: z.string().nullable().optional(),
   qCalidad: z.number().int().min(1).max(5).optional(),
   qPuntualidad: z.number().int().min(1).max(5).optional(),
   qRecomendacion: z.number().int().min(1).max(5).optional(),
-  surveyNotes: z.string().optional(),
+  surveyNotes: z.string().nullable().optional(),
   deliveryPersonId: z.string().nullable().optional(),
   isThirdPartyDelivery: z.boolean().optional(),
-  thirdPartyDriverName: z.string().optional(),
-  thirdPartyPlate: z.string().optional(),
-  deliveryDate: z.string().datetime().optional().or(z.literal("")),
-  scheduledShift: z.string().optional(),
-  scheduledHour: z.string().optional(),
+  thirdPartyDriverName: z.string().nullable().optional(),
+  thirdPartyPlate: z.string().nullable().optional(),
+  deliveryDate: z.string().datetime().optional().or(z.literal("")).nullable(),
+  scheduledShift: z.string().nullable().optional(),
+  scheduledHour: z.string().nullable().optional(),
   notifiedStatus: orderStatus.optional(),
   cardPrinted: z.boolean().optional(),
   dispatchPrinted: z.boolean().optional(),
@@ -289,7 +297,7 @@ ordersRouter.patch("/:id", async (req, res) => {
   const { deliveryDate, ...rest } = parsed.data;
   const order = await prisma.order.update({
     where: { id: req.params.id },
-    data: { ...rest, deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined },
+    data: { ...rest, deliveryDate: deliveryDateUpdate(deliveryDate) },
     include: orderInclude,
   });
   if (parsed.data.status === "DELIVERED") {

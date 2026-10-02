@@ -1,22 +1,34 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Payment, PaymentKind, PayeeType, Supplier } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { money } from "../../lib/labels";
+import SortHeader, { compareValues, SortDir, toggleSort } from "../../components/SortHeader";
 
 const typeLabel: Record<PaymentKind, string> = { PROVEEDOR: "Proveedor", NOMINA: "Nómina", CREDITO: "Crédito", OTRO: "Otro" };
+
+type PaymentSortKey = "date" | "type" | "amount" | "status";
 
 interface EmployeeOption {
   id: string;
   name: string;
 }
 
+interface ListsResponse {
+  paymentMethods?: string[];
+  [key: string]: unknown;
+}
+
 export default function PagosTab() {
-  const { currentStoreId, can } = useAuth();
+  const { currentStoreId } = useAuth();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [lists, setLists] = useState<ListsResponse>({});
   const [statusFilter, setStatusFilter] = useState<Payment["status"] | "">("");
   const [typeFilter, setTypeFilter] = useState<PaymentKind | "">("");
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<PaymentSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [form, setForm] = useState({
     type: "PROVEEDOR" as PaymentKind,
     payeeType: "PROVEEDOR" as PayeeType,
@@ -26,15 +38,45 @@ export default function PagosTab() {
     amount: "",
     date: new Date().toISOString().slice(0, 10),
     method: "",
+    status: "PENDIENTE" as Payment["status"],
+    notes: "",
   });
+
+  function onSort(key: PaymentSortKey) {
+    toggleSort(key, sortKey, sortDir, setSortKey, setSortDir);
+  }
 
   function load() {
     if (!currentStoreId) return;
     api.get<Payment[]>("/payments", { params: { storeId: currentStoreId, status: statusFilter || undefined, type: typeFilter || undefined } }).then((r) => setPayments(r.data));
     api.get<Supplier[]>("/suppliers").then((r) => setSuppliers(r.data));
-    if (can("empleados")) api.get<EmployeeOption[]>("/users").then((r) => setEmployees(r.data)).catch(() => {});
+    api.get<EmployeeOption[]>("/users/directory").then((r) => setEmployees(r.data)).catch(() => {});
+    api.get<ListsResponse>("/lists").then((r) => setLists(r.data)).catch(() => {});
   }
   useEffect(load, [currentStoreId, statusFilter, typeFilter]);
+
+  const paymentMethodOptions = lists.paymentMethods ?? [];
+
+  const visiblePayments = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    let list = payments;
+    if (term) {
+      list = list.filter(
+        (p) =>
+          (p.supplier?.name ?? "").toLowerCase().includes(term) ||
+          (p.employee?.name ?? "").toLowerCase().includes(term) ||
+          (p.payeeName ?? "").toLowerCase().includes(term) ||
+          (p.notes ?? "").toLowerCase().includes(term)
+      );
+    }
+    if (sortKey) {
+      list = [...list].sort((a, b) => {
+        const cmp = sortKey === "amount" ? Number(a.amount) - Number(b.amount) : compareValues(a[sortKey], b[sortKey]);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [payments, search, sortKey, sortDir]);
 
   const pagado = payments.filter((p) => p.status === "PAGADO").reduce((s, p) => s + Number(p.amount), 0);
   const pendiente = payments.filter((p) => p.status === "PENDIENTE").reduce((s, p) => s + Number(p.amount), 0);
@@ -52,8 +94,10 @@ export default function PagosTab() {
       amount: Number(form.amount),
       date: new Date(form.date + "T00:00:00").toISOString(),
       method: form.method || undefined,
+      status: form.status,
+      notes: form.notes || undefined,
     });
-    setForm({ ...form, amount: "", payeeName: "" });
+    setForm({ ...form, amount: "", payeeName: "", notes: "", status: "PENDIENTE" });
     load();
   }
 
@@ -115,12 +159,30 @@ export default function PagosTab() {
         <div className="flex gap-2">
           <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="border rounded-md px-2 py-1 text-sm" />
           <input type="number" placeholder="Monto" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="border rounded-md px-2 py-1 text-sm flex-1" />
-          <input placeholder="Método" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="border rounded-md px-2 py-1 text-sm w-32" />
+          {paymentMethodOptions.length > 0 ? (
+            <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="border rounded-md px-2 py-1 text-sm w-32">
+              <option value="">Método...</option>
+              {paymentMethodOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : (
+            <input placeholder="Método" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="border rounded-md px-2 py-1 text-sm w-32" />
+          )}
+          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as Payment["status"] })} className="border rounded-md px-2 py-1 text-sm w-32">
+            <option value="PENDIENTE">Pendiente</option>
+            <option value="PAGADO">Pagado</option>
+          </select>
         </div>
+        <input placeholder="Notas (opcional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full border rounded-md px-2 py-1 text-sm" />
         <button className="bg-pink-600 text-white text-sm rounded-md px-3 py-1.5">Registrar pago</button>
       </form>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        <input
+          placeholder="Buscar por beneficiario o notas..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[200px] border rounded-md px-2 py-1 text-sm"
+        />
         <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as PaymentKind | "")} className="border rounded-md px-2 py-1 text-sm">
           <option value="">Todos los tipos</option>
           {Object.entries(typeLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -132,12 +194,24 @@ export default function PagosTab() {
         </select>
       </div>
 
-      <div className="bg-white border rounded-lg divide-y">
-        {payments.map((p) => (
-          <div key={p.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm">
+      <div className="bg-white border rounded-lg divide-y overflow-x-auto">
+        <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[680px]">
+          <span className="w-28"><SortHeader label="Fecha" sortKey="date" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-24"><SortHeader label="Tipo" sortKey="type" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="flex-1">Beneficiario</span>
+          <span className="w-28 text-right"><SortHeader label="Valor" sortKey="amount" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
+          <span className="w-24"><SortHeader label="Estado" sortKey="status" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          <span className="w-32"></span>
+        </div>
+        {visiblePayments.map((p) => (
+          <div key={p.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm min-w-[680px]">
             <span className="w-28 text-gray-500">{new Date(p.date).toLocaleDateString("es-CO")}</span>
             <span className="w-24">{typeLabel[p.type]}</span>
-            <span className="flex-1">{payeeName(p)}</span>
+            <span className="flex-1">
+              {payeeName(p)}
+              {p.method && <span className="block text-xs text-gray-400">{p.method}</span>}
+              {p.notes && <span className="block text-xs text-gray-400">{p.notes}</span>}
+            </span>
             <span className="w-28 sm:text-right">{money(p.amount)}</span>
             <span className="w-24">
               <span className={`px-2 py-0.5 rounded-full text-xs ${p.status === "PAGADO" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
@@ -150,7 +224,7 @@ export default function PagosTab() {
             </span>
           </div>
         ))}
-        {payments.length === 0 && <p className="p-4 text-sm text-gray-500">Sin pagos registrados.</p>}
+        {visiblePayments.length === 0 && <p className="p-4 text-sm text-gray-500">Sin pagos registrados.</p>}
       </div>
     </div>
   );
