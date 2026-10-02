@@ -27,6 +27,47 @@ listsRouter.get("/", async (_req, res) => {
   res.json({ ...grouped, occasions });
 });
 
+// IMPORTANTE: las rutas literales /card-messages y /card-messages/:id deben registrarse
+// ANTES que las rutas genéricas /:listKey y /:listKey/:value — tienen la misma profundidad
+// de segmentos ("card-messages" calzaría como :listKey="card-messages"), así que si van
+// después, Express nunca llega a ellas y las intercepta la ruta genérica.
+
+// Mensajes de tarjeta sugeridos por ocasión (la fuente de la lista virtual "occasions").
+listsRouter.get("/card-messages", async (req, res) => {
+  const occasion = typeof req.query.occasion === "string" ? req.query.occasion : undefined;
+  const templates = await prisma.cardMessageTemplate.findMany({
+    where: occasion ? { occasion } : undefined,
+    orderBy: [{ occasion: "asc" }, { sortOrder: "asc" }],
+  });
+  res.json(templates);
+});
+
+const cardMessageSchema = z.object({
+  occasion: z.string().min(1),
+  message: z.string().min(1),
+});
+
+listsRouter.post("/card-messages", requirePermission("listas"), async (req, res) => {
+  const parsed = cardMessageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: zodMessage(parsed.error) });
+  }
+  const { occasion, message } = parsed.data;
+  const max = await prisma.cardMessageTemplate.aggregate({
+    where: { occasion },
+    _max: { sortOrder: true },
+  });
+  const template = await prisma.cardMessageTemplate.create({
+    data: { occasion, message, sortOrder: (max._max.sortOrder ?? 0) + 1 },
+  });
+  res.status(201).json(template);
+});
+
+listsRouter.delete("/card-messages/:id", requirePermission("listas"), async (req, res) => {
+  await prisma.cardMessageTemplate.delete({ where: { id: req.params.id } });
+  res.status(204).end();
+});
+
 const addValueSchema = z.object({ value: z.string().min(1) });
 
 // Agrega un valor a una lista. Las ocasiones se gestionan vía /lists/card-messages
@@ -63,41 +104,5 @@ listsRouter.post("/:listKey", requirePermission("listas"), async (req, res) => {
 listsRouter.delete("/:listKey/:value", requirePermission("listas"), async (req, res) => {
   const { listKey, value } = req.params;
   await prisma.listOption.deleteMany({ where: { listKey, value } });
-  res.status(204).end();
-});
-
-// Mensajes de tarjeta sugeridos por ocasión (la fuente de la lista virtual "occasions").
-listsRouter.get("/card-messages", async (req, res) => {
-  const occasion = typeof req.query.occasion === "string" ? req.query.occasion : undefined;
-  const templates = await prisma.cardMessageTemplate.findMany({
-    where: occasion ? { occasion } : undefined,
-    orderBy: [{ occasion: "asc" }, { sortOrder: "asc" }],
-  });
-  res.json(templates);
-});
-
-const cardMessageSchema = z.object({
-  occasion: z.string().min(1),
-  message: z.string().min(1),
-});
-
-listsRouter.post("/card-messages", requirePermission("listas"), async (req, res) => {
-  const parsed = cardMessageSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: zodMessage(parsed.error) });
-  }
-  const { occasion, message } = parsed.data;
-  const max = await prisma.cardMessageTemplate.aggregate({
-    where: { occasion },
-    _max: { sortOrder: true },
-  });
-  const template = await prisma.cardMessageTemplate.create({
-    data: { occasion, message, sortOrder: (max._max.sortOrder ?? 0) + 1 },
-  });
-  res.status(201).json(template);
-});
-
-listsRouter.delete("/card-messages/:id", requirePermission("listas"), async (req, res) => {
-  await prisma.cardMessageTemplate.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });
