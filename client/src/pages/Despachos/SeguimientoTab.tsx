@@ -118,6 +118,7 @@ export default function SeguimientoTab() {
                 <th className="px-3 py-2">#</th>
                 <th className="px-3 py-2">Pedido</th>
                 <th className="px-3 py-2">Destinatario</th>
+                <th className="px-3 py-2">Dirección</th>
                 <th className="px-3 py-2">Zona</th>
                 <th className="px-3 py-2">Domiciliario</th>
               </tr>
@@ -125,7 +126,7 @@ export default function SeguimientoTab() {
             <tbody>
               {withZone.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-center text-gray-400 text-xs">
+                  <td colSpan={6} className="px-3 py-4 text-center text-gray-400 text-xs">
                     No hay pedidos en camino con ubicación conocida.
                   </td>
                 </tr>
@@ -139,6 +140,9 @@ export default function SeguimientoTab() {
                   <td className="px-3 py-2 text-xs text-gray-400">{indexById.get(order.id)}</td>
                   <td className="px-3 py-2 font-mono text-xs text-pink-700">{order.invoiceNumber}</td>
                   <td className="px-3 py-2">{order.recipientName || order.customer.name}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500 max-w-[220px] truncate" title={order.deliveryAddress || ""}>
+                    {order.deliveryAddress || "—"}
+                  </td>
                   <td className="px-3 py-2">{zone}</td>
                   <td className="px-3 py-2">{deliveryPersonLabel(order)}</td>
                 </tr>

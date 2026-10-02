@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, Jornada } from "../../api/client";
+import { api, EmployeeUser, Jornada } from "../../api/client";
 
 const DAYS: { key: string; label: string }[] = [
   { key: "LUN", label: "Lun" },
@@ -30,6 +30,27 @@ const emptyForm = {
 
 type FormState = typeof emptyForm;
 
+interface DaySchedule {
+  off?: boolean;
+  start?: string;
+  end?: string;
+}
+type ScheduleMap = Record<string, DaySchedule>;
+
+function blankSchedule(): ScheduleMap {
+  const map: ScheduleMap = {};
+  for (const d of DAYS) map[d.key] = { off: true };
+  return map;
+}
+
+function scheduleFromJornada(j: Jornada): ScheduleMap {
+  const map: ScheduleMap = {};
+  for (const d of DAYS) {
+    map[d.key] = j.days?.[d.key] ? { off: false, start: j.start, end: j.end } : { off: true };
+  }
+  return map;
+}
+
 export default function HorariosTab() {
   const [jornadas, setJornadas] = useState<Jornada[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -38,11 +59,69 @@ export default function HorariosTab() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // --- Horario individual (por empleado, igual que el mockup) ---
+  const [employees, setEmployees] = useState<EmployeeUser[]>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
+  const [individualSchedule, setIndividualSchedule] = useState<ScheduleMap | null>(null);
+  const [baseJornadaId, setBaseJornadaId] = useState("");
+  const [individualError, setIndividualError] = useState("");
+  const [savingIndividual, setSavingIndividual] = useState(false);
+
   function load() {
     api.get<Jornada[]>("/jornadas").then((res) => setJornadas(res.data));
+    api
+      .get<EmployeeUser[]>("/users")
+      .then((res) => setEmployees(res.data))
+      .catch(() => setEmployees([]));
   }
 
   useEffect(load, []);
+
+  function selectEmployee(id: string) {
+    setSelectedEmployeeId(id);
+    setIndividualError("");
+    const emp = employees.find((e) => e.id === id);
+    if (!emp) {
+      setIndividualSchedule(null);
+      setBaseJornadaId("");
+      return;
+    }
+    setBaseJornadaId(emp.jornadaId ?? "");
+    if (emp.schedule && Object.keys(emp.schedule).length > 0) {
+      setIndividualSchedule({ ...blankSchedule(), ...(emp.schedule as ScheduleMap) });
+    } else {
+      const jornada = jornadas.find((j) => j.id === emp.jornadaId);
+      setIndividualSchedule(jornada ? scheduleFromJornada(jornada) : blankSchedule());
+    }
+  }
+
+  function applyBaseJornada(jornadaId: string) {
+    setBaseJornadaId(jornadaId);
+    const jornada = jornadas.find((j) => j.id === jornadaId);
+    if (jornada) setIndividualSchedule(scheduleFromJornada(jornada));
+  }
+
+  function setDay(dayKey: string, patch: Partial<DaySchedule>) {
+    setIndividualSchedule((prev) => ({ ...(prev ?? blankSchedule()), [dayKey]: { ...(prev?.[dayKey] ?? {}), ...patch } }));
+  }
+
+  async function saveIndividual() {
+    if (!selectedEmployeeId || !individualSchedule) return;
+    setIndividualError("");
+    setSavingIndividual(true);
+    try {
+      await api.put(`/users/${selectedEmployeeId}`, { schedule: individualSchedule });
+      load();
+    } catch (err: any) {
+      setIndividualError(err?.response?.data?.error || "No se pudo guardar el horario individual");
+    } finally {
+      setSavingIndividual(false);
+    }
+  }
+
+  function cancelIndividual() {
+    if (selectedEmployeeId) selectEmployee(selectedEmployeeId);
+  }
 
   function startCreate() {
     setEditingId(null);
@@ -199,10 +278,109 @@ export default function HorariosTab() {
         </div>
       </div>
 
-      <p className="text-xs text-gray-500 bg-gray-50 border rounded-lg p-3">
-        Los horarios personalizados por empleado (por fuera de una jornada con nombre) se asignan desde el
-        selector de "Jornada" en el formulario de cada empleado, en la pestaña Empleados.
-      </p>
+      <div className="border-t pt-6">
+        <h2 className="text-lg font-semibold mb-3">Horario individual</h2>
+        <div className="bg-white border rounded-lg p-4 space-y-4 max-w-3xl">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">Empleado</label>
+              <select
+                className="border rounded-md px-2 py-1 text-sm w-full"
+                value={selectedEmployeeId}
+                onChange={(e) => selectEmployee(e.target.value)}
+              >
+                <option value="">Seleccionar empleado...</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                    {e.storeName ? ` (${e.storeName})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Aplicar jornada base</label>
+              <select
+                className="border rounded-md px-2 py-1 text-sm w-full"
+                value={baseJornadaId}
+                disabled={!selectedEmployeeId}
+                onChange={(e) => applyBaseJornada(e.target.value)}
+              >
+                <option value="">Seleccionar jornada...</option>
+                {jornadas.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {selectedEmployeeId && individualSchedule && (
+            <>
+              <div className="divide-y border rounded-md">
+                {DAYS.map((d) => {
+                  const day = individualSchedule[d.key] ?? { off: true };
+                  return (
+                    <div key={d.key} className="p-2 flex flex-wrap items-center gap-3 text-sm">
+                      <span className="w-12 font-medium">{d.label}</span>
+                      <label className="flex items-center gap-1 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={!!day.off}
+                          onChange={(e) => setDay(d.key, { off: e.target.checked })}
+                        />
+                        Descansa
+                      </label>
+                      {!day.off && (
+                        <>
+                          <label className="flex items-center gap-1 text-xs">
+                            Entrada
+                            <input
+                              type="time"
+                              className="border rounded-md px-2 py-1 text-xs"
+                              value={day.start ?? "08:00"}
+                              onChange={(e) => setDay(d.key, { start: e.target.value })}
+                            />
+                          </label>
+                          <label className="flex items-center gap-1 text-xs">
+                            Salida
+                            <input
+                              type="time"
+                              className="border rounded-md px-2 py-1 text-xs"
+                              value={day.end ?? "18:00"}
+                              onChange={(e) => setDay(d.key, { end: e.target.value })}
+                            />
+                          </label>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {individualError && <p className="text-xs text-red-600">{individualError}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={savingIndividual}
+                  onClick={saveIndividual}
+                  className="bg-pink-600 text-white text-sm rounded-md px-3 py-2 disabled:opacity-50"
+                >
+                  {savingIndividual ? "Guardando..." : "Guardar"}
+                </button>
+                <button type="button" onClick={cancelIndividual} className="border text-sm rounded-md px-3 py-2">
+                  Cancelar
+                </button>
+              </div>
+            </>
+          )}
+
+          {!selectedEmployeeId && (
+            <p className="text-xs text-gray-400">Selecciona un empleado para editar su horario día por día.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
