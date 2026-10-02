@@ -119,7 +119,7 @@ model User {
   /// Horario personalizado por día (si no usa una jornada con nombre), { LUN:{off,start,end}, ... }.
   schedule        Json?
   jornadaId       String?
-  jornada         Jornada?  @relation(fields: [jornadaId], references: [id])
+  jornada         Jornada?  @relation(fields: [jornadaId], references: [id], onDelete: Restrict)
   createdAt       DateTime  @default(now())
 
   createdOrders    Order[]   @relation("OrderCreatedBy")
