@@ -24,7 +24,8 @@ import { paymentsRouter } from "./routes/payments.routes";
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Límite alto porque fotos de producto y logos de tienda viajan como base64 en el body.
+app.use(express.json({ limit: "25mb" }));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 

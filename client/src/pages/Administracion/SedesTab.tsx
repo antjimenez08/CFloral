@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { api, EmployeeUser, Store } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
+import { resizeImageFile } from "../../lib/imageResize";
 
 const emptyForm = {
   name: "",
@@ -65,12 +66,11 @@ export default function SedesTab() {
     setError("");
   }
 
-  function onLogoChange(e: ChangeEvent<HTMLInputElement>) {
+  async function onLogoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setForm((f) => ({ ...f, logo: String(reader.result) }));
-    reader.readAsDataURL(file);
+    const logo = await resizeImageFile(file, 400, 0.9);
+    setForm((f) => ({ ...f, logo }));
   }
 
   async function handleSubmit(e: FormEvent) {

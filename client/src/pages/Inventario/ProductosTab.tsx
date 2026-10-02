@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Product, Supply } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
+import { resizeImageFile } from "../../lib/imageResize";
 
 const money = (n: number) =>
   n.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -168,22 +169,19 @@ export default function ProductosTab() {
     }
   }
 
-  function handleCoverPhoto(e: ChangeEvent<HTMLInputElement>) {
+  async function handleCoverPhoto(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setCoverPhoto(String(reader.result));
-    reader.readAsDataURL(file);
+    setCoverPhoto(await resizeImageFile(file));
   }
 
-  function handleExtraPhotos(e: ChangeEvent<HTMLInputElement>) {
+  async function handleExtraPhotos(e: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => setPhotos((prev) => [...prev, String(reader.result)]);
-      reader.readAsDataURL(file);
-    });
     e.target.value = "";
+    for (const file of files) {
+      const resized = await resizeImageFile(file);
+      setPhotos((prev) => [...prev, resized]);
+    }
   }
 
   function removePhoto(idx: number) {
