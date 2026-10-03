@@ -26,13 +26,17 @@ const orderInclude = {
   items: { include: { product: true } },
 } as const;
 
+// Admin sin storeId ve los pedidos de todas las tiendas (vista "Todas las tiendas"
+// de Finanzas: tendencias, categorías y desempeño de productos del dashboard).
 ordersRouter.get("/", async (req, res) => {
   const storeId = resolveStoreId(req);
-  if (!storeId) return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  if (!storeId && req.auth!.role !== "ADMIN") {
+    return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  }
 
   const status = req.query.status as string | undefined;
   const orders = await prisma.order.findMany({
-    where: { storeId, ...(status ? { status: status as never } : {}) },
+    where: { ...(storeId ? { storeId } : {}), ...(status ? { status: status as never } : {}) },
     include: orderInclude,
     orderBy: { createdAt: "desc" },
   });
