@@ -51,6 +51,7 @@ export default function ListasTab() {
   const [selectedKey, setSelectedKey] = useState<string>(LIST_KEYS[0]);
   const [newValue, setNewValue] = useState("");
   const [listError, setListError] = useState("");
+  const [listNotice, setListNotice] = useState("");
 
   const [cardMessages, setCardMessages] = useState<Record<string, CardMessage[]>>({});
   const [occasionInput, setOccasionInput] = useState("");
@@ -80,9 +81,16 @@ export default function ListasTab() {
   async function addValue(e: FormEvent) {
     e.preventDefault();
     setListError("");
+    setListNotice("");
     if (!newValue.trim()) return;
     try {
-      await api.post(`/lists/${selectedKey}`, { value: newValue.trim() });
+      const res = await api.post(`/lists/${selectedKey}`, { value: newValue.trim() });
+      // El servidor deduplica (sin distinguir mayúsculas/minúsculas) y responde 200 cuando
+      // el valor ya existía en vez de crear uno nuevo (201); avisamos para que no parezca
+      // que no pasó nada.
+      if (res.status === 200) {
+        setListNotice("Ese valor ya existía en la lista.");
+      }
       setNewValue("");
       loadLists();
     } catch (err: any) {
@@ -141,6 +149,7 @@ export default function ListasTab() {
           onChange={(e) => {
             setSelectedKey(e.target.value);
             setListError("");
+            setListNotice("");
           }}
         >
           {LIST_KEYS.map((k) => (
@@ -173,6 +182,7 @@ export default function ListasTab() {
             <button className="bg-pink-600 text-white text-sm rounded-md px-3 py-1">Agregar</button>
           </form>
           {listError && <p className="text-xs text-red-600">{listError}</p>}
+          {listNotice && <p className="text-xs text-amber-600">{listNotice}</p>}
           <p className="text-xs text-gray-400">Quitar un valor no cambia los registros que ya lo usaban.</p>
         </div>
       </div>
