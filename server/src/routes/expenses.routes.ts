@@ -10,14 +10,18 @@ expensesRouter.use(requireAuth);
 
 const expenseType = z.enum(["GASTO", "COSTO", "INVERSION", "OTRO"]);
 
+// Admin sin storeId ve los registros de todas las tiendas (vista "Todas las tiendas"
+// de Finanzas), con el nombre de la tienda incluido para distinguirlos en la tabla.
 expensesRouter.get("/", async (req, res) => {
   const storeId = resolveStoreId(req);
-  if (!storeId) return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  if (!storeId && req.auth!.role !== "ADMIN") {
+    return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  }
 
   const { from, to, type } = req.query as Record<string, string | undefined>;
   const expenses = await prisma.expense.findMany({
     where: {
-      storeId,
+      ...(storeId ? { storeId } : {}),
       ...(type ? { type: type as never } : {}),
       ...(from || to
         ? {
@@ -28,6 +32,7 @@ expensesRouter.get("/", async (req, res) => {
           }
         : {}),
     },
+    include: storeId ? undefined : { store: { select: { name: true } } },
     orderBy: { date: "desc" },
   });
   res.json(expenses);

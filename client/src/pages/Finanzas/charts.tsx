@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { money } from "../../lib/labels";
 
 export interface BarDatum {
@@ -48,26 +49,62 @@ export interface GroupedBarDatum {
 
 const SERIES_COLORS = ["#db2777", "#ef4444", "#f59e0b", "#3b82f6", "#10b981"];
 
-export function GroupedBarChart({ data, seriesKeys, height = 180 }: { data: GroupedBarDatum[]; seriesKeys: string[]; height?: number }) {
-  const max = Math.max(1, ...data.flatMap((d) => seriesKeys.map((k) => d.series[k] ?? 0)));
+/** `interactive`: la leyenda se vuelve clicable para ocultar/mostrar cada serie
+ * (igual que un gráfico de librería), sin depender de ninguna librería externa. */
+export function GroupedBarChart({
+  data,
+  seriesKeys,
+  height = 180,
+  interactive = false,
+}: {
+  data: GroupedBarDatum[];
+  seriesKeys: string[];
+  height?: number;
+  interactive?: boolean;
+}) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const visibleKeys = interactive ? seriesKeys.filter((k) => !hidden.has(k)) : seriesKeys;
+
+  function toggle(k: string) {
+    if (!interactive) return;
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }
+
+  const max = Math.max(1, ...data.flatMap((d) => visibleKeys.map((k) => d.series[k] ?? 0)));
   const groupWidth = 100 / Math.max(1, data.length);
-  const barWidth = (groupWidth * 0.8) / seriesKeys.length;
+  const barWidth = (groupWidth * 0.8) / Math.max(1, visibleKeys.length);
   return (
     <div>
-      <div className="flex gap-3 text-[11px] mb-1">
-        {seriesKeys.map((k, i) => (
-          <span key={k} className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }} />
-            {k}
-          </span>
-        ))}
+      <div className="flex gap-3 text-[11px] mb-1 flex-wrap">
+        {seriesKeys.map((k) => {
+          const i = seriesKeys.indexOf(k);
+          const isHidden = hidden.has(k);
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => toggle(k)}
+              disabled={!interactive}
+              className={`flex items-center gap-1 ${interactive ? "cursor-pointer" : "cursor-default"} ${isHidden ? "opacity-40" : ""}`}
+            >
+              <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }} />
+              {k}
+            </button>
+          );
+        })}
       </div>
       <svg viewBox={`0 0 100 ${height}`} className="w-full" style={{ height }} preserveAspectRatio="none">
         {data.map((d, gi) => (
           <g key={gi}>
-            {seriesKeys.map((k, si) => {
+            {visibleKeys.map((k, si) => {
               const v = d.series[k] ?? 0;
               const h = (v / max) * (height - 20);
+              const colorIdx = seriesKeys.indexOf(k);
               return (
                 <rect
                   key={k}
@@ -75,7 +112,7 @@ export function GroupedBarChart({ data, seriesKeys, height = 180 }: { data: Grou
                   y={height - 20 - h}
                   width={barWidth * 0.9}
                   height={h}
-                  fill={SERIES_COLORS[si % SERIES_COLORS.length]}
+                  fill={SERIES_COLORS[colorIdx % SERIES_COLORS.length]}
                 >
                   <title>{`${d.label} · ${k}: ${money(v)}`}</title>
                 </rect>

@@ -14,8 +14,15 @@ const typeToListKey: Record<RecordType, string> = {
   OTRO: "expenseCategoriesOtro",
 };
 
-export default function FacturasTab() {
+interface Props {
+  storeId?: string;
+}
+
+export default function FacturasTab({ storeId }: Props) {
   const { currentStoreId } = useAuth();
+  // La tabla se ve con el alcance elegido en Finanzas (puede ser "todas las tiendas"),
+  // pero registrar/editar siempre es para la tienda activa en el topbar.
+  const createStoreId = currentStoreId ?? undefined;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [lists, setLists] = useState<Record<string, string[]>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -32,11 +39,10 @@ export default function FacturasTab() {
   }
 
   function load() {
-    if (!currentStoreId) return;
-    api.get<Expense[]>("/expenses", { params: { storeId: currentStoreId } }).then((r) => setExpenses(r.data));
+    api.get<Expense[]>("/expenses", { params: { storeId } }).then((r) => setExpenses(r.data));
     api.get("/lists").then((r) => setLists(r.data)).catch(() => {});
   }
-  useEffect(load, [currentStoreId]);
+  useEffect(load, [storeId]);
 
   const categories = lists[typeToListKey[form.type]] ?? [];
   const filtered = useMemo(() => {
@@ -67,7 +73,7 @@ export default function FacturasTab() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
-    if (!currentStoreId) return;
+    if (!createStoreId) return;
     const amount = Number(form.amount);
     if (!form.category.trim() || !amount || amount <= 0) {
       setError("Completa categoría y un monto válido");
@@ -76,7 +82,7 @@ export default function FacturasTab() {
     setSaving(true);
     try {
       const body = {
-        storeId: currentStoreId,
+        storeId: createStoreId,
         type: form.type,
         category: form.category,
         description: form.description || undefined,
@@ -108,9 +114,17 @@ export default function FacturasTab() {
             <select className="border rounded-md px-2 py-1 text-sm" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as RecordType, category: "" })}>
               {Object.entries(typeLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-            <input list="facturas-categorias" className="border rounded-md px-2 py-1 text-sm" placeholder="Categoría" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-            <datalist id="facturas-categorias">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+            <select className="border rounded-md px-2 py-1 text-sm" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <option value="">Selecciona una categoría...</option>
+              {form.category && !categories.includes(form.category) && <option value={form.category}>{form.category} (ya no está en la lista)</option>}
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
+          {categories.length === 0 && (
+            <p className="text-xs text-amber-700">
+              No hay categorías para "{typeLabel[form.type]}" todavía — agrégalas en Administración → Listas.
+            </p>
+          )}
           <input className="border rounded-md px-2 py-1 text-sm w-full" placeholder="Descripción (opcional)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           <div className="flex gap-2">
             <input type="date" className="border rounded-md px-2 py-1 text-sm" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
@@ -138,6 +152,7 @@ export default function FacturasTab() {
       <div className="bg-white border rounded-lg divide-y overflow-x-auto">
         <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[640px]">
           <span className="w-28"><SortHeader label="Fecha" sortKey="date" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          {!storeId && <span className="w-28">Tienda</span>}
           <span className="w-24"><SortHeader label="Tipo" sortKey="type" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="flex-1"><SortHeader label="Categoría / Descripción" sortKey="category" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="w-32 text-right"><SortHeader label="Valor" sortKey="amount" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
@@ -146,6 +161,7 @@ export default function FacturasTab() {
         {filtered.map((e) => (
           <div key={e.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm min-w-[640px]">
             <span className="w-28 text-gray-500">{new Date(e.date).toLocaleDateString("es-CO")}</span>
+            {!storeId && <span className="w-28 text-gray-500">{e.store?.name ?? "—"}</span>}
             <span className="w-24">{typeLabel[e.type]}</span>
             <span className="flex-1">{e.category}{e.description ? ` — ${e.description}` : ""}</span>
             <span className="w-32 sm:text-right">{money(e.amount)}</span>

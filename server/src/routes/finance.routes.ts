@@ -13,42 +13,40 @@ financeRouter.use(requirePermission("finanzas"));
 /// EBITDA (igual que EBITDA_EXCLUDED_CATEGORIES del mockup).
 export const EBITDA_EXCLUDED_CATEGORIES = ["Depreciación", "Intereses financieros", "Impuestos"];
 
-/**
- * Resumen financiero de una tienda en un rango de fechas: ventas (pedidos no
- * cancelados), costo de venta (aproximado con el costPrice actual del
- * producto — no queda un snapshot histórico por pedido en este MVP),
- * gastos e inversiones (de Expense), y EBITDA simple = ventas - costos - gastos.
- */
-financeRouter.get("/summary", async (req, res) => {
-  const storeId = resolveStoreId(req);
-  if (!storeId) return res.status(400).json({ error: "Falta seleccionar una tienda" });
+/// ---------------------------------------------------------------------------
+/// Helpers compartidos por /summary, /evolution, /reports y /recommendations.
+/// ---------------------------------------------------------------------------
 
-  const { from, to } = req.query as Record<string, string | undefined>;
-  const dateFilter = {
-    ...(from ? { gte: new Date(from) } : {}),
-    ...(to ? { lte: new Date(to) } : {}),
-  };
+const orderWithItemsInclude = {
+  items: { include: { product: { select: { id: true, name: true, costPrice: true } } } },
+} satisfies Prisma.OrderInclude;
 
-  const orders = await prisma.order.findMany({
-    where: {
-      storeId,
-      status: { not: "CANCELLED" },
-      ...(from || to ? { createdAt: dateFilter } : {}),
-    },
-    include: { items: { include: { product: true } } },
-  });
+type OrderWithItems = Prisma.OrderGetPayload<{ include: typeof orderWithItemsInclude }>;
 
+interface ExpenseLike {
+  type: string;
+  category: string;
+  amount: Prisma.Decimal;
+}
+
+interface FinanceMetrics {
+  ventas: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  ebitda: number;
+  ebitdaPct: number;
+  ordersCount: number;
+}
+
+/** Igual cálculo que antes vivía inline en /summary: costo de venta aproximado con
+ * el costPrice actual del producto (no hay snapshot histórico por pedido en este MVP). */
+function computeFinanceMetrics(orders: OrderWithItems[], expenses: ExpenseLike[]): FinanceMetrics {
   const ventas = orders.reduce((sum, o) => sum + Number(o.total), 0);
   const costos = orders.reduce(
-    (sum, o) =>
-      sum +
-      o.items.reduce((s, it) => s + Number(it.product.costPrice ?? 0) * it.quantity, 0),
+    (sum, o) => sum + o.items.reduce((s, it) => s + Number(it.product.costPrice ?? 0) * it.quantity, 0),
     0,
   );
-
-  const expenses = await prisma.expense.findMany({
-    where: { storeId, ...(from || to ? { date: dateFilter } : {}) },
-  });
   const gastos = expenses.filter((e) => e.type === "GASTO" || e.type === "OTRO").reduce((s, e) => s + Number(e.amount), 0);
   const costosRegistrados = expenses.filter((e) => e.type === "COSTO").reduce((s, e) => s + Number(e.amount), 0);
   const inversiones = expenses.filter((e) => e.type === "INVERSION").reduce((s, e) => s + Number(e.amount), 0);
@@ -59,7 +57,7 @@ financeRouter.get("/summary", async (req, res) => {
     .reduce((s, e) => s + Number(e.amount), 0);
   const ebitda = ventas - costosTotal - gastos + noOperativos;
 
-  res.json({
+  return {
     ventas,
     costos: costosTotal,
     gastos,
@@ -67,18 +65,94 @@ financeRouter.get("/summary", async (req, res) => {
     ebitda,
     ebitdaPct: ventas > 0 ? (ebitda / ventas) * 100 : 0,
     ordersCount: orders.length,
-  });
+  };
+}
+
+/**
+ * Resumen financiero en un rango de fechas: ventas, costos, gastos, inversiones y
+ * EBITDA. Para ADMIN sin storeId se agrega entre TODAS las tiendas y además se
+ * devuelve el desglose por tienda (byStore), para "Comparativo de gestión por
+ * tienda" y "Ventas por tienda" en el dashboard.
+ */
+financeRouter.get("/summary", async (req, res) => {
+  const storeId = resolveStoreId(req);
+  if (!storeId && req.auth!.role !== "ADMIN") {
+    return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  }
+  const storeWhere = storeId ? { storeId } : {};
+
+  const { from, to } = req.query as Record<string, string | undefined>;
+  const dateFilter = {
+    ...(from ? { gte: new Date(from) } : {}),
+    ...(to ? { lte: new Date(to) } : {}),
+  };
+
+  const [orders, expenses] = await Promise.all([
+    prisma.order.findMany({
+      where: {
+        ...storeWhere,
+        status: { not: "CANCELLED" },
+        ...(from || to ? { createdAt: dateFilter } : {}),
+      },
+      include: orderWithItemsInclude,
+    }),
+    prisma.expense.findMany({
+      where: { ...storeWhere, ...(from || to ? { date: dateFilter } : {}) },
+    }),
+  ]);
+
+  const overall = computeFinanceMetrics(orders, expenses);
+
+  let byStore: (FinanceMetrics & { storeId: string; name: string })[] | undefined;
+  if (!storeId) {
+    const stores = await prisma.store.findMany({ select: { id: true, name: true } });
+    byStore = stores.map((s) => ({
+      storeId: s.id,
+      name: s.name,
+      ...computeFinanceMetrics(
+        orders.filter((o) => o.storeId === s.id),
+        expenses.filter((e) => e.storeId === s.id),
+      ),
+    }));
+  }
+
+  res.json({ ...overall, byStore });
 });
 
-/// ---------------------------------------------------------------------------
-/// Helpers compartidos por /reports y /recommendations.
-/// ---------------------------------------------------------------------------
+/**
+ * Evolución mensual (últimos 6 meses) de Ventas/Costos/Gastos/Inversiones/Utilidad,
+ * para el gráfico de 5 series del dashboard. Admin sin storeId agrega todas las tiendas.
+ */
+financeRouter.get("/evolution", async (req, res) => {
+  const storeId = resolveStoreId(req);
+  if (!storeId && req.auth!.role !== "ADMIN") {
+    return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  }
+  const storeWhere = storeId ? { storeId } : {};
 
-const orderWithItemsInclude = {
-  items: { include: { product: { select: { id: true, name: true, costPrice: true } } } },
-} satisfies Prisma.OrderInclude;
+  const currentKey = monthKey(new Date());
+  const monthKeys: string[] = [];
+  for (let i = 5; i >= 0; i--) monthKeys.push(shiftMonthKey(currentKey, -i));
+  const rangeStart = monthRange(monthKeys[0]).start;
 
-type OrderWithItems = Prisma.OrderGetPayload<{ include: typeof orderWithItemsInclude }>;
+  const [orders, expenses] = await Promise.all([
+    prisma.order.findMany({
+      where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: rangeStart } },
+      include: orderWithItemsInclude,
+    }),
+    prisma.expense.findMany({ where: { ...storeWhere, date: { gte: rangeStart } } }),
+  ]);
+
+  const months = monthKeys.map((key) => {
+    const { start, end } = monthRange(key);
+    const monthOrders = orders.filter((o) => o.createdAt >= start && o.createdAt < end);
+    const monthExpenses = expenses.filter((e) => e.date >= start && e.date < end);
+    const m = computeFinanceMetrics(monthOrders, monthExpenses);
+    return { month: key, ventas: m.ventas, costos: m.costos, gastos: m.gastos, inversiones: m.inversiones, utilidad: m.ebitda };
+  });
+
+  res.json(months);
+});
 
 /** Igual que orderCOGS() del mockup (§4.2): suma costPrice actual * cantidad por item. */
 function orderCOGS(order: OrderWithItems): number {
@@ -179,22 +253,21 @@ financeRouter.get("/reports", async (req, res) => {
   const currentKey = monthKey(new Date());
   const priorKey = shiftMonthKey(currentKey, -1);
   const current = monthRange(currentKey);
-  const prior = monthRange(priorKey);
 
-  const [currentOrders, priorOrders, currentCostoExpenses, priorCostoExpenses] = await Promise.all([
+  // Historial de ventas (6 meses atrás + mes en curso) — liviano, solo para ubicar
+  // "el último mes con datos" al comparar y para la tabla de tendencia de 6 meses.
+  const historyStart = monthRange(shiftMonthKey(currentKey, -6)).start;
+  const [currentOrders, currentCostoExpenses, historyOrders] = await Promise.all([
     prisma.order.findMany({
       where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: current.start, lt: current.end } },
-      include: orderWithItemsInclude,
-    }),
-    prisma.order.findMany({
-      where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: prior.start, lt: prior.end } },
       include: orderWithItemsInclude,
     }),
     prisma.expense.findMany({
       where: { ...storeWhere, type: "COSTO", date: { gte: current.start, lt: current.end } },
     }),
-    prisma.expense.findMany({
-      where: { ...storeWhere, type: "COSTO", date: { gte: prior.start, lt: prior.end } },
+    prisma.order.findMany({
+      where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: historyStart } },
+      select: { total: true, createdAt: true },
     }),
   ]);
 
@@ -202,9 +275,37 @@ financeRouter.get("/reports", async (req, res) => {
     currentOrders,
     currentCostoExpenses.reduce((s, e) => s + Number(e.amount), 0),
   );
+
+  const totalsByMonth = new Map<string, number>();
+  for (const o of historyOrders) {
+    const k = monthKey(o.createdAt);
+    totalsByMonth.set(k, (totalsByMonth.get(k) ?? 0) + Number(o.total));
+  }
+
+  // Compara contra el último mes anterior que tuvo ventas, no ciegamente contra el
+  // mes calendario inmediatamente anterior (que puede estar vacío si la tienda es
+  // nueva o si recién empezó el mes en curso).
+  let comparisonKey = priorKey;
+  for (let i = 1; i <= 6; i++) {
+    const k = shiftMonthKey(currentKey, -i);
+    if (totalsByMonth.get(k)) {
+      comparisonKey = k;
+      break;
+    }
+  }
+  const comparison = monthRange(comparisonKey);
+  const [comparisonOrders, comparisonCostoExpenses] = await Promise.all([
+    prisma.order.findMany({
+      where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: comparison.start, lt: comparison.end } },
+      include: orderWithItemsInclude,
+    }),
+    prisma.expense.findMany({
+      where: { ...storeWhere, type: "COSTO", date: { gte: comparison.start, lt: comparison.end } },
+    }),
+  ]);
   const prevM = computeMonthMetrics(
-    priorOrders,
-    priorCostoExpenses.reduce((s, e) => s + Number(e.amount), 0),
+    comparisonOrders,
+    comparisonCostoExpenses.reduce((s, e) => s + Number(e.amount), 0),
   );
 
   // Clientes nuevos vs recurrentes este mes.
@@ -234,12 +335,14 @@ financeRouter.get("/reports", async (req, res) => {
     by: ["customerId"],
     where: { ...storeWhere, status: { not: "CANCELLED" } },
     _max: { createdAt: true },
+    _count: true,
   });
   const now = new Date();
   const clientesInactivos = customerAgg.filter(
     (c) => c._max.createdAt && daysBetween(c._max.createdAt, now) > 60,
   ).length;
 
+  const orderCountByCustomer = new Map(customerAgg.map((c) => [c.customerId, c._count]));
   const inScopeCustomerIds = customerAgg.map((c) => c.customerId);
   const topClientesRaw = inScopeCustomerIds.length
     ? await prisma.customer.findMany({
@@ -253,6 +356,7 @@ financeRouter.get("/reports", async (req, res) => {
     customerId: c.id,
     name: c.name,
     lifetimeValue: Number(c.lifetimeValue),
+    orderCount: orderCountByCustomer.get(c.id) ?? 0,
   }));
 
   // Rotación de productos del mes en curso.
@@ -272,17 +376,8 @@ financeRouter.get("/reports", async (req, res) => {
     .slice(0, 6)
     .map((p) => ({ productId: p.productId, name: p.name }));
 
-  // Proyección de ventas: crecimiento promedio mes a mes sobre hasta 6 meses con datos.
-  const historyStart = monthRange(shiftMonthKey(currentKey, -6)).start;
-  const historyOrders = await prisma.order.findMany({
-    where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: historyStart } },
-    select: { total: true, createdAt: true },
-  });
-  const totalsByMonth = new Map<string, number>();
-  for (const o of historyOrders) {
-    const k = monthKey(o.createdAt);
-    totalsByMonth.set(k, (totalsByMonth.get(k) ?? 0) + Number(o.total));
-  }
+  // Proyección de ventas: crecimiento promedio mes a mes sobre hasta 6 meses con datos
+  // (reutiliza totalsByMonth, ya calculado arriba para elegir el mes de comparación).
   const sortedKeys = [...totalsByMonth.keys()].sort();
   const totalsSeries = sortedKeys.map((k) => totalsByMonth.get(k)!);
   const growths: number[] = [];
@@ -295,6 +390,14 @@ financeRouter.get("/reports", async (req, res) => {
   const lastMonthTotal = totalsSeries.length ? totalsSeries[totalsSeries.length - 1] : 0;
   const proyeccionVentas = Math.max(0, lastMonthTotal * (1 + avgGrowth));
 
+  // Tabla de tendencia: los 6 meses calendario más recientes (incluye el actual),
+  // con cero explícito en los meses sin ventas (no se omiten, para que la tabla
+  // siempre tenga 6 filas).
+  const monthlyTrend = Array.from({ length: 6 }, (_, i) => {
+    const key = shiftMonthKey(currentKey, -(5 - i));
+    return { month: key, ventas: totalsByMonth.get(key) ?? 0 };
+  });
+
   res.json({
     ventas: curM.ventas,
     ventasDelta: pctDelta(curM.ventas, prevM.ventas),
@@ -306,6 +409,7 @@ financeRouter.get("/reports", async (req, res) => {
     margenDelta: pctDelta(curM.margen, prevM.margen),
     satisfaccion: curM.satisfaccion,
     satisfaccionDelta: curM.satisfaccion !== null ? pctDelta(curM.satisfaccion, prevM.satisfaccion) : null,
+    comparadoConMes: comparisonKey,
     clientesNuevos,
     clientesRecurrentes,
     clientesInactivos,
@@ -313,6 +417,8 @@ financeRouter.get("/reports", async (req, res) => {
     rotacionRevisar,
     sinMovimiento,
     proyeccionVentas,
+    monthlyTrend,
+    crecimientoPromedioMensual: avgGrowth * 100,
   });
 });
 

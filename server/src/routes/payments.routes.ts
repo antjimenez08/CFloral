@@ -15,20 +15,24 @@ const paymentStatus = z.enum(["PENDIENTE", "PAGADO"]);
 
 const employeeSelect = { select: { id: true, name: true } } as const;
 
+// Admin sin storeId ve los pagos de todas las tiendas (vista "Todas las tiendas").
 paymentsRouter.get("/", async (req, res) => {
   const storeId = resolveStoreId(req);
-  if (!storeId) return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  if (!storeId && req.auth!.role !== "ADMIN") {
+    return res.status(400).json({ error: "Falta seleccionar una tienda" });
+  }
 
   const { status, type } = req.query as Record<string, string | undefined>;
   const payments = await prisma.payment.findMany({
     where: {
-      storeId,
+      ...(storeId ? { storeId } : {}),
       ...(status ? { status: status as never } : {}),
       ...(type ? { type: type as never } : {}),
     },
     include: {
       supplier: { select: { id: true, name: true } },
       employee: employeeSelect,
+      ...(storeId ? {} : { store: { select: { name: true } } }),
     },
     orderBy: { date: "desc" },
   });

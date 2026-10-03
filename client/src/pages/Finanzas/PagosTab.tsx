@@ -18,8 +18,15 @@ interface ListsResponse {
   [key: string]: unknown;
 }
 
-export default function PagosTab() {
+interface Props {
+  storeId?: string;
+}
+
+export default function PagosTab({ storeId }: Props) {
   const { currentStoreId } = useAuth();
+  // La tabla se ve con el alcance elegido en Finanzas (puede ser "todas las tiendas"),
+  // pero registrar un pago siempre es para la tienda activa en el topbar.
+  const createStoreId = currentStoreId ?? undefined;
   const [payments, setPayments] = useState<Payment[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
@@ -47,13 +54,12 @@ export default function PagosTab() {
   }
 
   function load() {
-    if (!currentStoreId) return;
-    api.get<Payment[]>("/payments", { params: { storeId: currentStoreId, status: statusFilter || undefined, type: typeFilter || undefined } }).then((r) => setPayments(r.data));
+    api.get<Payment[]>("/payments", { params: { storeId, status: statusFilter || undefined, type: typeFilter || undefined } }).then((r) => setPayments(r.data));
     api.get<Supplier[]>("/suppliers").then((r) => setSuppliers(r.data));
     api.get<EmployeeOption[]>("/users/directory").then((r) => setEmployees(r.data)).catch(() => {});
     api.get<ListsResponse>("/lists").then((r) => setLists(r.data)).catch(() => {});
   }
-  useEffect(load, [currentStoreId, statusFilter, typeFilter]);
+  useEffect(load, [storeId, statusFilter, typeFilter]);
 
   const paymentMethodOptions = lists.paymentMethods ?? [];
 
@@ -83,9 +89,9 @@ export default function PagosTab() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!currentStoreId || !form.amount) return;
+    if (!createStoreId || !form.amount) return;
     await api.post("/payments", {
-      storeId: currentStoreId,
+      storeId: createStoreId,
       type: form.type,
       payeeType: form.payeeType,
       supplierId: form.payeeType === "PROVEEDOR" ? form.supplierId || undefined : undefined,
@@ -197,6 +203,7 @@ export default function PagosTab() {
       <div className="bg-white border rounded-lg divide-y overflow-x-auto">
         <div className="p-3 hidden sm:flex text-xs font-semibold text-gray-500 uppercase min-w-[680px]">
           <span className="w-28"><SortHeader label="Fecha" sortKey="date" active={sortKey} dir={sortDir} onClick={onSort} /></span>
+          {!storeId && <span className="w-28">Tienda</span>}
           <span className="w-24"><SortHeader label="Tipo" sortKey="type" active={sortKey} dir={sortDir} onClick={onSort} /></span>
           <span className="flex-1">Beneficiario</span>
           <span className="w-28 text-right"><SortHeader label="Valor" sortKey="amount" active={sortKey} dir={sortDir} onClick={onSort} className="justify-end" /></span>
@@ -206,6 +213,7 @@ export default function PagosTab() {
         {visiblePayments.map((p) => (
           <div key={p.id} className="p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0 text-sm min-w-[680px]">
             <span className="w-28 text-gray-500">{new Date(p.date).toLocaleDateString("es-CO")}</span>
+            {!storeId && <span className="w-28 text-gray-500">{p.store?.name ?? "—"}</span>}
             <span className="w-24">{typeLabel[p.type]}</span>
             <span className="flex-1">
               {payeeName(p)}

@@ -80,6 +80,20 @@ export interface Expense {
   amount: string;
   date: string;
   createdAt: string;
+  // Solo viene cuando se consulta sin storeId (vista "Todas las tiendas" de Admin).
+  store?: { name: string };
+}
+
+export interface FinanceStoreMetrics {
+  storeId: string;
+  name: string;
+  ventas: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  ebitda: number;
+  ebitdaPct: number;
+  ordersCount: number;
 }
 
 export interface FinanceSummary {
@@ -90,6 +104,17 @@ export interface FinanceSummary {
   ebitda: number;
   ebitdaPct: number;
   ordersCount: number;
+  // Solo viene cuando se consulta sin storeId (vista "Todas las tiendas" de Admin).
+  byStore?: FinanceStoreMetrics[];
+}
+
+export interface FinanceEvolutionPoint {
+  month: string;
+  ventas: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  utilidad: number;
 }
 
 export interface EmployeeUser {
@@ -277,11 +302,19 @@ export type PaymentKind = "PROVEEDOR" | "NOMINA" | "CREDITO" | "OTRO";
 export type PayeeType = "PROVEEDOR" | "EMPLEADO" | "OTRO";
 export type PaymentRecordStatus = "PENDIENTE" | "PAGADO";
 
+export interface BudgetSuggestion {
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+}
+
 export interface Payment {
   id: string;
   storeId: string;
   type: PaymentKind;
   payeeType: PayeeType;
+  // Solo viene cuando se consulta sin storeId (vista "Todas las tiendas" de Admin).
+  store?: { name: string };
   supplierId: string | null;
   supplier?: { id: string; name: string } | null;
   employeeId: string | null;
