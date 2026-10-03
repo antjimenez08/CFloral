@@ -37,11 +37,13 @@ const BASE_STYLE = `
   td { padding: 2px 0; font-size: 13px; }
 `;
 
-/** Tarjeta de regalo (~6cm x 9cm): para el destinatario, nunca muestra notas internas. */
+/** Tarjeta de regalo vertical (6cm x 9cm, como el mockup): para el destinatario, nunca
+ * muestra notas internas; incluye el logo de la sede cuando lo tiene. */
 export function printGiftCard(order: Order) {
   const recipientName = order.recipientName || order.customer.name;
   const message = order.cardMessage?.trim() ? escapeHtml(order.cardMessage) : "¡Con mucho cariño!";
   const storeName = order.store?.name || "compañíafloral";
+  const logo = order.store?.logo;
 
   const html = `<!doctype html>
 <html lang="es">
@@ -50,22 +52,134 @@ export function printGiftCard(order: Order) {
 <title>Tarjeta ${escapeHtml(order.invoiceNumber)}</title>
 <style>
   ${BASE_STYLE}
-  @page { size: 9cm 6cm; margin: 0; }
-  body { width: 9cm; height: 6cm; }
-  .card { width: 9cm; height: 6cm; padding: 0.5cm; display: flex; flex-direction: column; justify-content: space-between; }
+  @page { size: 6cm 9cm; margin: 0; }
+  body { width: 6cm; height: 9cm; }
+  .card { width: 6cm; height: 9cm; padding: 0.5cm; display: flex; flex-direction: column; justify-content: space-between; align-items: center; text-align: center; }
+  .logo { max-width: 3.2cm; max-height: 2cm; object-fit: contain; }
   .msg { font-style: italic; font-family: Georgia, "Times New Roman", serif; font-size: 14px; line-height: 1.4; text-align: center; margin: 0 4px; }
   .line { font-size: 12px; }
 </style>
 </head>
 <body>
   <div class="card">
-    <div class="wordmark" style="font-size:12px;">${escapeHtml(storeName)}</div>
+    ${
+      logo
+        ? `<img class="logo" src="${escapeHtml(logo)}" alt="${escapeHtml(storeName)}" />`
+        : `<div class="wordmark" style="font-size:14px;">${escapeHtml(storeName)}</div>`
+    }
     <div class="msg">${message}</div>
     <div>
       <div class="line">Para: <strong>${escapeHtml(recipientName)}</strong></div>
       <div class="line">De: <strong>${escapeHtml(order.customer.name)}</strong></div>
     </div>
   </div>
+</body>
+</html>`;
+
+  openAndPrint(html);
+}
+
+function giftCardPageHtml(order: Order): string {
+  const recipientName = order.recipientName || order.customer.name;
+  const message = order.cardMessage?.trim() ? escapeHtml(order.cardMessage) : "¡Con mucho cariño!";
+  const storeName = order.store?.name || "compañíafloral";
+  const logo = order.store?.logo;
+  return `<div class="card giftcard-page">
+    ${
+      logo
+        ? `<img class="logo" src="${escapeHtml(logo)}" alt="${escapeHtml(storeName)}" />`
+        : `<div class="wordmark" style="font-size:14px;">${escapeHtml(storeName)}</div>`
+    }
+    <div class="msg">${message}</div>
+    <div>
+      <div class="line">Para: <strong>${escapeHtml(recipientName)}</strong></div>
+      <div class="line">De: <strong>${escapeHtml(order.customer.name)}</strong></div>
+    </div>
+  </div>`;
+}
+
+function dispatchPageHtml(order: Order): string {
+  const storeName = order.store?.name || "compañíafloral";
+  const zone = orderZone(order) || "Sin zona";
+  const recipientName = order.recipientName || order.customer.name;
+  const recipientPhone = order.recipientPersona?.phone || order.customer.phone || "";
+  const itemsText = order.items.map((i) => `${i.quantity}x ${i.productName}`).join(", ");
+  const scheduleParts: string[] = [];
+  if (order.deliveryDate) scheduleParts.push(new Date(order.deliveryDate).toLocaleDateString("es-CO"));
+  if (order.scheduledShift) scheduleParts.push(order.scheduledShift);
+  if (order.scheduledHour) scheduleParts.push(order.scheduledHour);
+
+  return `<div class="dispatch-page">
+  <div class="header">
+    <div>
+      <div class="wordmark" style="font-size:14px;">${escapeHtml(storeName)}</div>
+      <h1>Orden de despacho</h1>
+    </div>
+    <div style="text-align:right;">
+      <div class="muted" style="font-size:12px;">${escapeHtml(order.invoiceNumber)}</div>
+      <span class="tag">${escapeHtml(zone)}</span>
+    </div>
+  </div>
+  <div class="section box">
+    <div class="label">Destinatario</div>
+    <div style="font-size:14px; font-weight:600;">${escapeHtml(recipientName)}</div>
+    ${recipientPhone ? `<div style="font-size:13px;">Tel: ${escapeHtml(recipientPhone)}</div>` : ""}
+    <div style="font-size:13px; margin-top:4px;">${escapeHtml(order.deliveryAddress || "")}</div>
+    ${order.deliveryCity ? `<div style="font-size:13px;">${escapeHtml(order.deliveryCity)}</div>` : ""}
+  </div>
+  ${
+    scheduleParts.length
+      ? `<div class="section">
+    <div class="label">Entrega programada</div>
+    <div style="font-size:13px;">${scheduleParts.map(escapeHtml).join(" · ")}</div>
+  </div>`
+      : ""
+  }
+  <div class="section">
+    <div class="label">Pedido</div>
+    <div style="font-size:13px;">${escapeHtml(itemsText)}</div>
+  </div>
+  ${
+    order.notes
+      ? `<div class="dashed">
+    <div class="label">⚠ Nota interna (no mostrar al cliente)</div>
+    <div style="font-size:13px; white-space:pre-wrap;">${escapeHtml(order.notes)}</div>
+  </div>`
+      : ""
+  }
+</div>`;
+}
+
+/** Imprime, en un solo documento (un solo diálogo de impresión), la tarjeta de regalo y la
+ * orden de despacho de cada pedido recibido, ya ordenados por zona por el llamador — así el
+ * transportador reparte el documento completo zona por zona en vez de recibir N impresiones
+ * sueltas. Usa páginas con nombre de CSS para que la tarjeta (6x9cm) y la orden de despacho
+ * (5.5x5in) mantengan cada una su propio tamaño de página dentro del mismo documento. */
+export function printAllGiftCardsAndDispatch(orders: Order[]) {
+  const pages = orders.map((o) => giftCardPageHtml(o) + dispatchPageHtml(o)).join("\n");
+
+  const html = `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Tarjetas y órdenes de despacho</title>
+<style>
+  ${BASE_STYLE}
+  @page giftcard { size: 6cm 9cm; margin: 0; }
+  @page dispatch { size: 5.5in 5in; margin: 0.3in; }
+  .giftcard-page { page: giftcard; page-break-after: always; width: 6cm; height: 9cm; padding: 0.5cm; display: flex; flex-direction: column; justify-content: space-between; align-items: center; text-align: center; }
+  .dispatch-page { page: dispatch; page-break-after: always; }
+  .logo { max-width: 3.2cm; max-height: 2cm; object-fit: contain; }
+  .msg { font-style: italic; font-family: Georgia, "Times New Roman", serif; font-size: 14px; line-height: 1.4; text-align: center; margin: 0 4px; }
+  .line { font-size: 12px; }
+  .header { display:flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  h1 { font-size: 16px; margin: 0; }
+  .section { margin-bottom: 10px; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+</style>
+</head>
+<body>
+${pages}
 </body>
 </html>`;
 

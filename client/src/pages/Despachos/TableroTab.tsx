@@ -2,7 +2,7 @@ import { DragEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, DirectoryUser, Order, OrderStatus, STATUS_FLOW, STATUS_LABEL } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
-import { printDispatchOrder, printGiftCard } from "./printDocs";
+import { printAllGiftCardsAndDispatch, printDispatchOrder, printGiftCard } from "./printDocs";
 import { orderZone, zoneSortOrder, ZONES } from "./zoneUtils";
 
 const NEXT_LABEL: Partial<Record<OrderStatus, string>> = {
@@ -16,6 +16,26 @@ const SHIFTS = ["Mañana", "Tarde", "Noche"];
 
 const THIRD_PARTY = "THIRD_PARTY";
 
+type GroupBy = "status" | "date" | "shift" | "hour";
+
+const GROUP_LABEL: Record<GroupBy, string> = {
+  status: "Estado",
+  date: "Fecha",
+  shift: "Jornada",
+  hour: "Hora",
+};
+
+interface BoardColumn {
+  key: string;
+  label: string;
+  orders: Order[];
+  status?: OrderStatus;
+}
+
+function dateLabel(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+}
+
 function buildNotifyUrl(order: Order, newStatus: OrderStatus): string | null {
   const digits = (order.customer.phone || "").replace(/\D/g, "");
   if (!digits) return null;
@@ -28,11 +48,12 @@ export default function TableroTab() {
   const { currentStoreId, user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [domiciliarios, setDomiciliarios] = useState<DirectoryUser[] | null>(null);
-  const [dragOverColumn, setDragOverColumn] = useState<OrderStatus | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 
   const [filterDate, setFilterDate] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
   const [filterZone, setFilterZone] = useState("");
+  const [groupBy, setGroupBy] = useState<GroupBy>("status");
 
   function load() {
     if (!currentStoreId) return;
@@ -79,28 +100,83 @@ export default function TableroTab() {
     });
   }, [orders, filterDate, filterMonth, filterZone]);
 
-  function ordersFor(status: OrderStatus) {
-    return filteredOrders.filter((o) => o.status === status);
+  /// Columnas del tablero según el criterio de agrupación elegido (mockup §4.8): por
+  /// defecto Estado (el flujo de producción/despacho); también se puede agrupar por
+  /// Fecha programada, Jornada u Hora programada para ver el día de trabajo de otra forma.
+  const columns = useMemo<BoardColumn[]>(() => {
+    if (groupBy === "status") {
+      return STATUS_FLOW.map((status) => ({
+        key: status,
+        label: STATUS_LABEL[status],
+        status,
+        orders: filteredOrders.filter((o) => o.status === status),
+      }));
+    }
+    if (groupBy === "shift") {
+      const cols: BoardColumn[] = SHIFTS.map((s) => ({
+        key: s,
+        label: s,
+        orders: filteredOrders.filter((o) => o.scheduledShift === s),
+      }));
+      cols.push({ key: "", label: "Sin jornada", orders: filteredOrders.filter((o) => !o.scheduledShift) });
+      return cols;
+    }
+    if (groupBy === "hour") {
+      const hours = Array.from(new Set(filteredOrders.map((o) => o.scheduledHour).filter(Boolean))).sort() as string[];
+      const cols: BoardColumn[] = hours.map((h) => ({
+        key: h,
+        label: h,
+        orders: filteredOrders.filter((o) => o.scheduledHour === h),
+      }));
+      cols.push({ key: "", label: "Sin hora", orders: filteredOrders.filter((o) => !o.scheduledHour) });
+      return cols;
+    }
+    // date
+    const dates = Array.from(
+      new Set(filteredOrders.map((o) => (o.deliveryDate ? o.deliveryDate.slice(0, 10) : "")).filter(Boolean))
+    ).sort() as string[];
+    const cols: BoardColumn[] = dates.map((d) => ({
+      key: d,
+      label: dateLabel(d),
+      orders: filteredOrders.filter((o) => o.deliveryDate?.slice(0, 10) === d),
+    }));
+    cols.push({ key: "", label: "Sin fecha", orders: filteredOrders.filter((o) => !o.deliveryDate) });
+    return cols;
+  }, [filteredOrders, groupBy]);
+
+  function patchForDrop(columnKey: string): Record<string, unknown> {
+    if (groupBy === "shift") return { scheduledShift: columnKey || null };
+    if (groupBy === "hour") return { scheduledHour: columnKey || null };
+    if (groupBy === "date") {
+      return { deliveryDate: columnKey ? new Date(`${columnKey}T00:00:00`).toISOString() : null };
+    }
+    return {};
   }
 
   async function printAllReady(columnOrders: Order[]) {
     const sorted = [...columnOrders].sort((a, b) => zoneSortOrder(orderZone(a)) - zoneSortOrder(orderZone(b)));
-    for (const o of sorted) {
-      printGiftCard(o);
-      printDispatchOrder(o);
-    }
+    printAllGiftCardsAndDispatch(sorted);
     await Promise.all(sorted.map((o) => api.patch(`/orders/${o.id}`, { cardPrinted: true, dispatchPrinted: true })));
     load();
   }
 
-  function handleDrop(e: DragEvent<HTMLDivElement>, status: OrderStatus) {
+  /// Mueve un pedido a otra columna del tablero, sin importar si viene de soltar un
+  /// arrastre (mouse) o de elegir "Mover a..." (la alternativa táctil, ya que el
+  /// drag-and-drop HTML5 no es confiable en pantallas táctiles).
+  function moveOrderToColumn(order: Order, column: BoardColumn) {
+    if (groupBy === "status" && column.status) {
+      if (order.status !== column.status) changeStatus(order, column.status);
+      return;
+    }
+    patchOrder(order.id, patchForDrop(column.key));
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>, column: BoardColumn) {
     e.preventDefault();
     setDragOverColumn(null);
     const orderId = e.dataTransfer.getData("text/plain");
     const order = orders.find((o) => o.id === orderId);
-    if (order && order.status !== status) {
-      changeStatus(order, status);
-    }
+    if (order) moveOrderToColumn(order, column);
   }
 
   return (
@@ -139,6 +215,20 @@ export default function TableroTab() {
             ))}
           </select>
         </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Agrupar tablero por</label>
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            {(Object.keys(GROUP_LABEL) as GroupBy[]).map((g) => (
+              <option key={g} value={g}>
+                {GROUP_LABEL[g]}
+              </option>
+            ))}
+          </select>
+        </div>
         <button
           onClick={clearFilters}
           className="text-sm border rounded px-3 py-1.5 hover:bg-white"
@@ -148,43 +238,41 @@ export default function TableroTab() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        {STATUS_FLOW.map((status) => {
-          const columnOrders = ordersFor(status);
-          const idx = STATUS_FLOW.indexOf(status);
-          const prevStatus = idx > 0 ? STATUS_FLOW[idx - 1] : null;
-          const nextStatus = idx < STATUS_FLOW.length - 1 ? STATUS_FLOW[idx + 1] : null;
+        {columns.map((column) => (
+          <div
+            key={column.key || `${column.label}-empty`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (dragOverColumn !== column.key) setDragOverColumn(column.key);
+            }}
+            onDragLeave={() => setDragOverColumn((cur) => (cur === column.key ? null : cur))}
+            onDrop={(e) => handleDrop(e, column)}
+            className={`flex-1 min-w-[240px] rounded-lg p-3 transition-colors ${
+              dragOverColumn === column.key ? "bg-pink-100 ring-2 ring-pink-300" : "bg-pink-50"
+            }`}
+          >
+            <div className="font-semibold text-sm mb-2 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                {column.label}
+                <span className="bg-white rounded-full px-2 text-xs text-gray-500">{column.orders.length}</span>
+              </span>
+              {column.status === "READY" && column.orders.length > 0 && (
+                <button
+                  onClick={() => printAllReady(column.orders)}
+                  className="text-xs border rounded px-2 py-1 bg-white hover:bg-gray-50"
+                >
+                  Imprimir todas
+                </button>
+              )}
+            </div>
 
-          return (
-            <div
-              key={status}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (dragOverColumn !== status) setDragOverColumn(status);
-              }}
-              onDragLeave={() => setDragOverColumn((cur) => (cur === status ? null : cur))}
-              onDrop={(e) => handleDrop(e, status)}
-              className={`flex-1 min-w-[240px] rounded-lg p-3 transition-colors ${
-                dragOverColumn === status ? "bg-pink-100 ring-2 ring-pink-300" : "bg-pink-50"
-              }`}
-            >
-              <div className="font-semibold text-sm mb-2 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  {STATUS_LABEL[status]}
-                  <span className="bg-white rounded-full px-2 text-xs text-gray-500">{columnOrders.length}</span>
-                </span>
-                {status === "READY" && columnOrders.length > 0 && (
-                  <button
-                    onClick={() => printAllReady(columnOrders)}
-                    className="text-xs border rounded px-2 py-1 bg-white hover:bg-gray-50"
-                  >
-                    Imprimir todas
-                  </button>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                {columnOrders.length === 0 && <p className="text-xs text-gray-400 px-1">Sin pedidos</p>}
-                {columnOrders.map((order) => (
+            <div className="space-y-2">
+              {column.orders.length === 0 && <p className="text-xs text-gray-400 px-1">Sin pedidos</p>}
+              {column.orders.map((order) => {
+                const idx = STATUS_FLOW.indexOf(order.status);
+                const prevStatus = idx > 0 ? STATUS_FLOW[idx - 1] : null;
+                const nextStatus = idx >= 0 && idx < STATUS_FLOW.length - 1 ? STATUS_FLOW[idx + 1] : null;
+                return (
                   <OrderCard
                     key={order.id}
                     order={order}
@@ -196,12 +284,15 @@ export default function TableroTab() {
                     onDragStartOrder={(e) => e.dataTransfer.setData("text/plain", order.id)}
                     onChangeStatus={changeStatus}
                     onPatch={patchOrder}
+                    moveColumns={columns}
+                    currentColumnKey={column.key}
+                    onMoveToColumn={(col) => moveOrderToColumn(order, col)}
                   />
-                ))}
-              </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -217,6 +308,9 @@ function OrderCard({
   onDragStartOrder,
   onChangeStatus,
   onPatch,
+  moveColumns,
+  currentColumnKey,
+  onMoveToColumn,
 }: {
   order: Order;
   isAdmin: boolean;
@@ -227,6 +321,9 @@ function OrderCard({
   onDragStartOrder: (e: DragEvent<HTMLDivElement>) => void;
   onChangeStatus: (order: Order, status: OrderStatus) => void;
   onPatch: (orderId: string, patch: Record<string, unknown>) => void;
+  moveColumns: BoardColumn[];
+  currentColumnKey: string;
+  onMoveToColumn: (column: BoardColumn) => void;
 }) {
   const itemSummary = order.items.map((i) => `${i.quantity}x ${i.productName}`).join(", ");
   const notified = order.notifiedStatus === order.status;
@@ -352,6 +449,24 @@ function OrderCard({
             {order.dispatchPrinted ? "Reimprimir orden ✓" : "Orden de despacho"}
           </button>
         </div>
+      )}
+
+      {moveColumns.length > 1 && (
+        <select
+          value={currentColumnKey}
+          onChange={(e) => {
+            const target = moveColumns.find((c) => c.key === e.target.value);
+            if (target) onMoveToColumn(target);
+          }}
+          title="Alternativa al arrastre, útil en pantallas táctiles"
+          className="border rounded px-1 py-0.5 text-xs w-full"
+        >
+          {moveColumns.map((c) => (
+            <option key={c.key || "__none__"} value={c.key}>
+              Mover a: {c.label}
+            </option>
+          ))}
+        </select>
       )}
 
       <div className="flex items-center justify-between gap-1 pt-1">
