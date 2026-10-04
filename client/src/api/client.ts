@@ -298,15 +298,23 @@ export interface BudgetEntry {
   amount: string;
 }
 
+export interface BudgetComparisonRow {
+  name: string;
+  presupuesto: number;
+  real: number;
+  cumplimiento: number | null;
+  manual: boolean;
+}
+
+export interface BudgetComparison {
+  currentKey: string;
+  priorMonthsCount: number;
+  rows: BudgetComparisonRow[];
+}
+
 export type PaymentKind = "PROVEEDOR" | "NOMINA" | "CREDITO" | "OTRO";
 export type PayeeType = "PROVEEDOR" | "EMPLEADO" | "OTRO";
 export type PaymentRecordStatus = "PENDIENTE" | "PAGADO";
-
-export interface BudgetSuggestion {
-  productName: string;
-  quantity: number;
-  unitPrice: number;
-}
 
 export interface Payment {
   id: string;

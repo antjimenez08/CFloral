@@ -17,6 +17,41 @@ export const EBITDA_EXCLUDED_CATEGORIES = ["Depreciación", "Intereses financier
 /// Helpers compartidos por /summary, /evolution, /reports y /recommendations.
 /// ---------------------------------------------------------------------------
 
+/** Filtro maestro del dashboard de Finanzas (igual que finInScope() del mockup): o bien un
+ * conjunto explícito de meses (checkboxes "Mes a mes"), o bien los últimos N días ("Día a
+ * día"), o ningún filtro (todo el historial). */
+type Period =
+  | { mode: "months"; months: Set<string> }
+  | { mode: "days"; days: number }
+  | { mode: "all" };
+
+function parsePeriod(query: Record<string, unknown>): Period {
+  const monthsParam = query.months;
+  const daysParam = query.days as string | undefined;
+  // "months" presente (incluso vacío) significa "el usuario deseleccionó todos los meses" —
+  // distinto de "months" ausente, que cae en mode:"all" (sin filtro, usado por otros llamadores).
+  if (typeof monthsParam === "string") {
+    return { mode: "months", months: new Set(monthsParam.split(",").filter(Boolean)) };
+  }
+  if (daysParam) {
+    const days = Number(daysParam);
+    if (Number.isFinite(days) && days > 0) return { mode: "days", days };
+  }
+  return { mode: "all" };
+}
+
+function inPeriod(date: Date, period: Period): boolean {
+  if (period.mode === "all") return true;
+  if (period.mode === "months") return period.months.has(monthKey(date));
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setDate(start.getDate() - (period.days - 1));
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d >= start && d <= end;
+}
+
 const orderWithItemsInclude = {
   items: { include: { product: { select: { id: true, name: true, costPrice: true } } } },
 } satisfies Prisma.OrderInclude;
@@ -74,54 +109,45 @@ function computeFinanceMetrics(orders: OrderWithItems[], expenses: ExpenseLike[]
  * devuelve el desglose por tienda (byStore), para "Comparativo de gestión por
  * tienda" y "Ventas por tienda" en el dashboard.
  */
+// El comparativo por tienda (byStore) se calcula siempre, para cualquier rol con permiso
+// "finanzas" — igual que en el mockup, "Comparativo de gestión por tienda" y "Ventas por
+// tienda" son parte permanente del dashboard, no algo que solo vea Admin en modo agregado.
 financeRouter.get("/summary", async (req, res) => {
   const storeId = resolveStoreId(req);
   if (!storeId && req.auth!.role !== "ADMIN") {
     return res.status(400).json({ error: "Falta seleccionar una tienda" });
   }
-  const storeWhere = storeId ? { storeId } : {};
+  const period = parsePeriod(req.query as Record<string, unknown>);
 
-  const { from, to } = req.query as Record<string, string | undefined>;
-  const dateFilter = {
-    ...(from ? { gte: new Date(from) } : {}),
-    ...(to ? { lte: new Date(to) } : {}),
-  };
-
-  const [orders, expenses] = await Promise.all([
-    prisma.order.findMany({
-      where: {
-        ...storeWhere,
-        status: { not: "CANCELLED" },
-        ...(from || to ? { createdAt: dateFilter } : {}),
-      },
-      include: orderWithItemsInclude,
-    }),
-    prisma.expense.findMany({
-      where: { ...storeWhere, ...(from || to ? { date: dateFilter } : {}) },
-    }),
+  const [allOrdersRaw, allExpensesRaw, stores] = await Promise.all([
+    prisma.order.findMany({ where: { status: { not: "CANCELLED" } }, include: orderWithItemsInclude }),
+    prisma.expense.findMany({}),
+    prisma.store.findMany({ select: { id: true, name: true } }),
   ]);
+  const allOrders = allOrdersRaw.filter((o) => inPeriod(o.createdAt, period));
+  const allExpenses = allExpensesRaw.filter((e) => inPeriod(e.date, period));
 
+  const orders = storeId ? allOrders.filter((o) => o.storeId === storeId) : allOrders;
+  const expenses = storeId ? allExpenses.filter((e) => e.storeId === storeId) : allExpenses;
   const overall = computeFinanceMetrics(orders, expenses);
 
-  let byStore: (FinanceMetrics & { storeId: string; name: string })[] | undefined;
-  if (!storeId) {
-    const stores = await prisma.store.findMany({ select: { id: true, name: true } });
-    byStore = stores.map((s) => ({
-      storeId: s.id,
-      name: s.name,
-      ...computeFinanceMetrics(
-        orders.filter((o) => o.storeId === s.id),
-        expenses.filter((e) => e.storeId === s.id),
-      ),
-    }));
-  }
+  const byStore: (FinanceMetrics & { storeId: string; name: string })[] = stores.map((s) => ({
+    storeId: s.id,
+    name: s.name,
+    ...computeFinanceMetrics(
+      allOrders.filter((o) => o.storeId === s.id),
+      allExpenses.filter((e) => e.storeId === s.id),
+    ),
+  }));
 
   res.json({ ...overall, byStore });
 });
 
 /**
- * Evolución mensual (últimos 6 meses) de Ventas/Costos/Gastos/Inversiones/Utilidad,
- * para el gráfico de 5 series del dashboard. Admin sin storeId agrega todas las tiendas.
+ * Evolución de Ventas/Costos/Gastos/Inversiones/Utilidad, un punto por cada mes
+ * seleccionado (?months=2026-08,2026-09) o por cada uno de los últimos N días
+ * (?days=7|14|30) — el mismo filtro maestro "Ver por" que gobierna todo el dashboard.
+ * Admin sin storeId agrega todas las tiendas.
  */
 financeRouter.get("/evolution", async (req, res) => {
   const storeId = resolveStoreId(req);
@@ -129,29 +155,46 @@ financeRouter.get("/evolution", async (req, res) => {
     return res.status(400).json({ error: "Falta seleccionar una tienda" });
   }
   const storeWhere = storeId ? { storeId } : {};
-
-  const currentKey = monthKey(new Date());
-  const monthKeys: string[] = [];
-  for (let i = 5; i >= 0; i--) monthKeys.push(shiftMonthKey(currentKey, -i));
-  const rangeStart = monthRange(monthKeys[0]).start;
+  const query = req.query as Record<string, unknown>;
 
   const [orders, expenses] = await Promise.all([
-    prisma.order.findMany({
-      where: { ...storeWhere, status: { not: "CANCELLED" }, createdAt: { gte: rangeStart } },
-      include: orderWithItemsInclude,
-    }),
-    prisma.expense.findMany({ where: { ...storeWhere, date: { gte: rangeStart } } }),
+    prisma.order.findMany({ where: { ...storeWhere, status: { not: "CANCELLED" } }, include: orderWithItemsInclude }),
+    prisma.expense.findMany({ where: { ...storeWhere } }),
   ]);
 
-  const months = monthKeys.map((key) => {
-    const { start, end } = monthRange(key);
-    const monthOrders = orders.filter((o) => o.createdAt >= start && o.createdAt < end);
-    const monthExpenses = expenses.filter((e) => e.date >= start && e.date < end);
-    const m = computeFinanceMetrics(monthOrders, monthExpenses);
-    return { month: key, ventas: m.ventas, costos: m.costos, gastos: m.gastos, inversiones: m.inversiones, utilidad: m.ebitda };
-  });
+  function bucketFor(label: string, matches: (d: Date) => boolean) {
+    const m = computeFinanceMetrics(orders.filter((o) => matches(o.createdAt)), expenses.filter((e) => matches(e.date)));
+    return { month: label, ventas: m.ventas, costos: m.costos, gastos: m.gastos, inversiones: m.inversiones, utilidad: m.ebitda };
+  }
 
-  res.json(months);
+  const daysParam = query.days as string | undefined;
+  if (daysParam) {
+    const days = Math.max(1, Number(daysParam) || 7);
+    const buckets = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    for (let i = days - 1; i >= 0; i--) {
+      const day = new Date(today);
+      day.setDate(day.getDate() - i);
+      const key = day.toISOString().slice(0, 10);
+      buckets.push(
+        bucketFor(key, (d) => {
+          const dd = new Date(d);
+          dd.setHours(0, 0, 0, 0);
+          return dd.getTime() === day.getTime();
+        }),
+      );
+    }
+    return res.json(buckets);
+  }
+
+  const monthsParam = query.months as string | undefined;
+  const monthKeys = monthsParam ? monthsParam.split(",").filter(Boolean).sort() : [];
+  const buckets = monthKeys.map((key) => {
+    const { start, end } = monthRange(key);
+    return bucketFor(key, (d) => d >= start && d < end);
+  });
+  res.json(buckets);
 });
 
 /** Igual que orderCOGS() del mockup (§4.2): suma costPrice actual * cantidad por item. */

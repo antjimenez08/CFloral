@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, BudgetEntry, BudgetSuggestion, Order, Product } from "../../api/client";
+import { useEffect, useState } from "react";
+import { api, BudgetComparison, BudgetEntry, Product } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { money } from "../../lib/labels";
 import { GroupedBarChart } from "./charts";
 
-interface DraftRow {
-  productName: string;
-  quantity: number;
-  unitPrice: number;
+const MONTH_NAMES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function monthLabel(key: string) {
+  const [y, m] = key.split("-");
+  return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
+}
+
+interface Row {
+  productId: string;
+  qty: number;
 }
 
 interface Props {
@@ -16,181 +21,165 @@ interface Props {
 
 export default function PresupuestosTab({ storeId }: Props) {
   const { currentStoreId } = useAuth();
-  // Las listas se ven con el alcance elegido en Finanzas (storeId, puede ser "todas las
-  // tiendas"), pero crear/editar siempre se hace para la tienda activa en el topbar.
+  // El formulario de creación siempre es para la tienda activa en el topbar (un presupuesto
+  // es por tienda); la comparación se ve con el alcance elegido en Finanzas (puede ser "todas
+  // las tiendas").
   const createStoreId = currentStoreId ?? undefined;
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [products, setProducts] = useState<Product[]>([]);
-  const [budgets, setBudgets] = useState<BudgetEntry[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [suggestions, setSuggestions] = useState<BudgetSuggestion[]>([]);
-  const [draft, setDraft] = useState<DraftRow[]>([]);
-  const [productToAdd, setProductToAdd] = useState("");
-  const [qtyToAdd, setQtyToAdd] = useState(1);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [comparison, setComparison] = useState<BudgetComparison | null>(null);
   const [saving, setSaving] = useState(false);
 
-  function load() {
-    api.get<Product[]>("/products", { params: { storeId } }).then((r) => setProducts(r.data));
-    api.get<BudgetEntry[]>("/budgets", { params: { storeId, month } }).then((r) => setBudgets(r.data));
-    api.get<Order[]>("/orders", { params: { storeId } }).then((r) => setOrders(r.data));
-    if (createStoreId) {
-      api
-        .get<BudgetSuggestion[]>("/budgets/suggestions", { params: { storeId: createStoreId, month } })
-        .then((r) => setSuggestions(r.data))
-        .catch(() => setSuggestions([]));
+  function loadComparison() {
+    api
+      .get<BudgetComparison>("/budgets/comparison", { params: { storeId, month } })
+      .then((r) => setComparison(r.data))
+      .catch(() => setComparison(null));
+  }
+  useEffect(loadComparison, [storeId, month]);
+
+  // Las filas del formulario se reconstruyen solo cuando cambia tienda+mes: primero desde el
+  // presupuesto ya guardado para ese mes, y si no hay ninguno, con los productos de la tienda
+  // en cantidad 0 como punto de partida (igual que ensurePresupuestoFormRows() del mockup).
+  useEffect(() => {
+    if (!createStoreId) {
+      setProducts([]);
+      setRows([]);
+      return;
     }
+    Promise.all([
+      api.get<Product[]>("/products", { params: { storeId: createStoreId } }),
+      api.get<BudgetEntry[]>("/budgets", { params: { storeId: createStoreId, month } }),
+    ]).then(([pRes, eRes]) => {
+      setProducts(pRes.data);
+      const entries = eRes.data;
+      if (entries.length) {
+        const nextRows = entries
+          .map((e) => ({ productId: pRes.data.find((p) => p.name === e.productName)?.id ?? "", qty: e.quantity }))
+          .filter((r) => r.productId);
+        setRows(nextRows.length ? nextRows : [{ productId: "", qty: 0 }]);
+      } else {
+        setRows(pRes.data.length ? pRes.data.map((p) => ({ productId: p.id, qty: 0 })) : [{ productId: "", qty: 0 }]);
+      }
+    });
+  }, [createStoreId, month]);
+
+  function setRow(i: number, patch: Partial<Row>) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
-  useEffect(load, [storeId, createStoreId, month]);
-
-  const realByProduct = useMemo(() => {
-    const map = new Map<string, number>();
-    orders
-      .filter((o) => o.status !== "CANCELLED" && o.createdAt.slice(0, 7) === month)
-      .forEach((o) => o.items.forEach((it) => map.set(it.productName, (map.get(it.productName) ?? 0) + Number(it.subtotal))));
-    return map;
-  }, [orders, month]);
-
+  function removeRow(i: number) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
   function addRow() {
-    const product = products.find((p) => p.id === productToAdd);
-    if (!product || qtyToAdd <= 0) return;
-    setDraft((prev) => [...prev.filter((d) => d.productName !== product.name), { productName: product.name, quantity: qtyToAdd, unitPrice: Number(product.unitPrice) }]);
-    setProductToAdd("");
-    setQtyToAdd(1);
-  }
-
-  function addSuggestion(s: BudgetSuggestion) {
-    setDraft((prev) => [...prev.filter((d) => d.productName !== s.productName), { productName: s.productName, quantity: s.quantity, unitPrice: s.unitPrice }]);
-  }
-
-  function removeDraftRow(i: number) {
-    setDraft((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  function editEntry(c: BudgetEntry) {
-    setDraft([{ productName: c.productName, quantity: c.quantity, unitPrice: Number(c.unitPrice) }]);
-  }
-
-  async function removeEntry(id: string) {
-    await api.delete(`/budgets/${id}`);
-    load();
+    setRows((prev) => [...prev, { productId: "", qty: 0 }]);
   }
 
   async function saveBudget() {
-    if (!createStoreId || draft.length === 0) return;
+    if (!createStoreId) return;
     setSaving(true);
     try {
-      await api.post("/budgets", {
-        storeId: createStoreId,
-        month,
-        items: draft.map((d) => ({ productName: d.productName, quantity: d.quantity, unitPrice: d.unitPrice })),
-      });
-      setDraft([]);
-      load();
+      const items = rows
+        .map((r) => ({ product: products.find((p) => p.id === r.productId), qty: r.qty }))
+        .filter((r): r is { product: Product; qty: number } => !!r.product && r.qty > 0)
+        .map((r) => ({ productName: r.product.name, quantity: r.qty, unitPrice: Number(r.product.unitPrice) }));
+      await api.put("/budgets", { storeId: createStoreId, month, items });
+      loadComparison();
     } finally {
       setSaving(false);
     }
   }
 
-  const draftTotal = draft.reduce((s, d) => s + d.quantity * d.unitPrice, 0);
-  const draftNames = new Set(draft.map((d) => d.productName));
-  const budgetNames = new Set(budgets.map((b) => b.productName));
-  const suggestionsToShow = suggestions.filter((s) => !budgetNames.has(s.productName)).slice(0, 5);
+  const total = rows.reduce((s, r) => {
+    const p = products.find((x) => x.id === r.productId);
+    return s + (p ? r.qty * Number(p.unitPrice) : 0);
+  }, 0);
 
-  const comparison = budgets
-    .map((b) => {
-      const real = realByProduct.get(b.productName) ?? 0;
-      const presupuesto = Number(b.amount);
-      const cumplimiento = presupuesto > 0 ? (real / presupuesto) * 100 : real > 0 ? 100 : 0;
-      return { ...b, real, cumplimiento };
-    })
-    .sort((a, b) => Number(b.amount) - Number(a.amount));
-
-  const chartData = comparison.map((c) => ({ label: c.productName.slice(0, 10), series: { Presupuesto: Number(c.amount), Real: c.real } }));
+  const cumplimientoGroups = (comparison?.rows ?? []).map((r) => ({ label: r.name.slice(0, 14), series: { Presupuesto: r.presupuesto, Real: r.real } }));
 
   return (
     <div className="space-y-6">
       <div>
-        <label className="block text-xs text-gray-500 mb-1">Mes</label>
+        <label className="block text-xs text-gray-500 mb-1">Mes del presupuesto</label>
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="border rounded-md px-2 py-1 text-sm" />
       </div>
 
-      <div className="bg-white border rounded-lg p-4 space-y-3 max-w-xl">
-        <h3 className="font-medium text-sm">Crear presupuesto</h3>
-        {!createStoreId && (
-          <p className="text-xs text-amber-700">
-            Selecciona una tienda específica (no "Todas las tiendas") arriba en el topbar para crear o editar líneas.
-          </p>
-        )}
-        <div className="flex gap-2">
-          <select value={productToAdd} onChange={(e) => setProductToAdd(e.target.value)} className="flex-1 border rounded-md px-2 py-1 text-sm">
-            <option value="">Selecciona un producto...</option>
-            {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <input type="number" min={1} value={qtyToAdd} onChange={(e) => setQtyToAdd(Number(e.target.value))} className="w-20 border rounded-md px-2 py-1 text-sm" />
-          <button type="button" onClick={addRow} className="border rounded-md px-3 py-1 text-sm">Agregar</button>
+      {!createStoreId ? (
+        <div className="bg-white border rounded-lg p-4">
+          <h3 className="font-medium text-sm mb-1">Crear presupuesto</h3>
+          <p className="text-sm text-gray-500">Selecciona una tienda específica arriba en el topbar para crear o editar su presupuesto de ventas por producto.</p>
         </div>
-        {draft.map((d, i) => (
-          <div key={i} className="flex justify-between items-center text-sm">
-            <span>{d.quantity}x {d.productName}</span>
-            <span className="flex items-center gap-2">
-              {money(d.quantity * d.unitPrice)}
-              <button type="button" onClick={() => removeDraftRow(i)} className="text-red-600 text-xs hover:underline">Quitar</button>
-            </span>
-          </div>
-        ))}
-        {draft.length > 0 && (
-          <>
-            <div className="flex justify-between font-semibold text-sm border-t pt-2">
-              <span>Total presupuestado</span>
-              <span>{money(draftTotal)}</span>
-            </div>
-            <button onClick={saveBudget} disabled={saving || !createStoreId} className="bg-pink-600 text-white text-sm rounded-md px-3 py-1.5 disabled:opacity-50">
-              {saving ? "Guardando..." : "Guardar presupuesto"}
-            </button>
-          </>
-        )}
-
-        {suggestionsToShow.length > 0 && (
-          <div className="border-t pt-3 space-y-1.5">
-            <h4 className="text-xs font-medium text-gray-500 uppercase">Sugeridos (promedio de los últimos 3 meses)</h4>
-            {suggestionsToShow.map((s) => (
-              <div key={s.productName} className="flex justify-between items-center text-sm">
-                <span>{s.quantity}x {s.productName} <span className="text-gray-400">({money(s.unitPrice)} c/u)</span></span>
-                <button
-                  type="button"
-                  onClick={() => addSuggestion(s)}
-                  disabled={draftNames.has(s.productName)}
-                  className="text-xs text-pink-700 hover:underline disabled:text-gray-400"
-                >
-                  {draftNames.has(s.productName) ? "Agregado" : "Usar sugerencia"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {comparison.length > 0 && (
+      ) : (
         <div className="bg-white border rounded-lg p-4 space-y-3">
-          <h3 className="font-medium text-sm">Presupuesto vs real</h3>
-          <GroupedBarChart data={chartData} seriesKeys={["Presupuesto", "Real"]} />
+          <h3 className="font-medium text-sm">Crear presupuesto</h3>
+          <p className="text-xs text-gray-500">
+            Busca y agrega los productos de la meta del mes, indica la cantidad esperada de ventas de cada uno y el sistema calcula el subtotal (cantidad × precio de venta). La meta total es la suma de todos los productos.
+          </p>
+          <div className="flex gap-2 text-xs font-semibold text-gray-500 uppercase px-1">
+            <span className="flex-1">Producto</span>
+            <span className="w-16 text-center">Cant.</span>
+            <span className="w-24 text-right">Precio unit.</span>
+            <span className="w-28 text-right">Subtotal</span>
+            <span className="w-16"></span>
+          </div>
+          {rows.map((row, i) => {
+            const p = products.find((x) => x.id === row.productId);
+            const subtotal = p ? row.qty * Number(p.unitPrice) : 0;
+            return (
+              <div key={i} className="flex gap-2 items-center">
+                <select value={row.productId} onChange={(e) => setRow(i, { productId: e.target.value })} className="flex-1 border rounded-md px-2 py-1 text-sm">
+                  <option value="">Selecciona un producto</option>
+                  {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name}</option>)}
+                </select>
+                <input type="number" min={0} step={1} value={row.qty} onChange={(e) => setRow(i, { qty: Number(e.target.value) })} className="w-16 border rounded-md px-2 py-1 text-sm text-center" />
+                <span className="w-24 text-right text-xs text-gray-500">{p ? money(p.unitPrice) : "—"}</span>
+                <span className="w-28 text-right text-sm font-semibold">{money(subtotal)}</span>
+                <button type="button" onClick={() => removeRow(i)} className="w-16 text-xs text-red-600">Quitar</button>
+              </div>
+            );
+          })}
+          <button type="button" onClick={addRow} className="text-xs border rounded-md px-3 py-1.5">+ Agregar producto</button>
+          <div className="flex justify-end items-baseline gap-2 pt-2 border-t">
+            <span className="text-sm text-gray-500">Meta total del mes</span>
+            <span className="text-lg font-bold">{money(total)}</span>
+          </div>
+          <button type="button" onClick={saveBudget} disabled={saving} className="bg-pink-600 text-white text-sm rounded-md px-3 py-1.5 disabled:opacity-50">
+            {saving ? "Guardando..." : "Guardar presupuesto"}
+          </button>
+        </div>
+      )}
+
+      <div className="bg-white border rounded-lg p-4 space-y-3">
+        <h3 className="font-medium text-sm">Presupuesto de ventas por producto</h3>
+        <p className="text-xs text-gray-500">
+          Presupuesto para {monthLabel(month)} (el que definiste manualmente, o el promedio sugerido de los últimos {comparison?.priorMonthsCount ?? 3} meses cuando no defines uno) vs. las ventas reales del mes, y su % de cumplimiento.
+        </p>
+        {comparison && comparison.rows.length > 0 ? (
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-gray-500 border-b"><th className="py-1">Producto</th><th className="text-right">Presupuesto</th><th className="text-right">Real</th><th className="text-right">% Cumplimiento</th><th className="w-24"></th></tr></thead>
+            <thead><tr className="text-left text-gray-500 border-b"><th className="py-1">Producto</th><th className="text-right">Presupuesto</th><th className="text-right">Real</th><th className="text-right">Cumplimiento</th></tr></thead>
             <tbody>
-              {comparison.map((c) => (
-                <tr key={c.id} className="border-b">
-                  <td className="py-1">{c.productName}</td>
-                  <td className="text-right">{money(c.amount)}</td>
-                  <td className="text-right">{money(c.real)}</td>
-                  <td className={`text-right ${c.cumplimiento >= 100 ? "text-green-700" : c.cumplimiento < 70 ? "text-red-700" : "text-amber-700"}`}>{c.cumplimiento.toFixed(0)}%</td>
-                  <td className="text-right whitespace-nowrap">
-                    <button type="button" onClick={() => editEntry(c)} className="text-xs text-pink-700 hover:underline mr-2">Editar</button>
-                    <button type="button" onClick={() => removeEntry(c.id)} className="text-xs text-red-600 hover:underline">Eliminar</button>
+              {comparison.rows.map((r) => (
+                <tr key={r.name} className="border-b">
+                  <td className="py-1">{r.name} {r.manual && <span className="text-gray-400 text-xs">(manual)</span>}</td>
+                  <td className="text-right">{money(r.presupuesto)}</td>
+                  <td className="text-right">{money(r.real)}</td>
+                  <td className={`text-right ${r.cumplimiento == null ? "text-gray-400" : r.cumplimiento >= 100 ? "text-green-700" : r.cumplimiento < 70 ? "text-red-700" : "text-amber-700"}`}>
+                    {r.cumplimiento == null ? "—" : `${r.cumplimiento.toFixed(0)}%`}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        ) : (
+          <p className="text-sm text-gray-500">Aún no hay suficientes datos para generar un presupuesto.</p>
+        )}
+      </div>
+
+      {cumplimientoGroups.length > 0 && (
+        <div className="bg-white border rounded-lg p-4 space-y-3">
+          <h3 className="font-medium text-sm">Cumplimiento vs. presupuesto</h3>
+          <p className="text-xs text-gray-500">Ventas reales de {monthLabel(month)} comparadas con el presupuesto, por producto.</p>
+          <GroupedBarChart data={cumplimientoGroups} seriesKeys={["Presupuesto", "Real"]} />
         </div>
       )}
     </div>

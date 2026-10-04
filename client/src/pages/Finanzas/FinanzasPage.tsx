@@ -24,7 +24,8 @@ export default function FinanzasPage() {
     ["pagos", "Pagos"],
   ];
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [scope, setScope] = useState<string>(currentStoreId ?? "");
+  // Igual que el mockup: Admin arranca viendo "Todas las tiendas" por defecto.
+  const [scope, setScope] = useState<string>(ALL_STORES);
 
   const isAdmin = user?.role === "ADMIN";
   // undefined => el servidor agrega entre todas las tiendas (solo Admin puede pedirlo).
@@ -39,7 +40,7 @@ export default function FinanzasPage() {
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-500">Ver datos de</label>
             <select
-              value={scope || currentStoreId || ""}
+              value={scope}
               onChange={(e) => setScope(e.target.value)}
               className="border rounded-md px-2 py-1 text-sm"
             >
@@ -65,7 +66,7 @@ export default function FinanzasPage() {
           </button>
         ))}
       </div>
-      {tab === "dashboard" && <DashboardTab storeId={viewStoreId} onGoToFacturas={() => setTab("facturas")} />}
+      {tab === "dashboard" && <DashboardTab storeId={viewStoreId} />}
       {tab === "reportes" && <ReportesTab storeId={viewStoreId} onViewBudget={goToPresupuesto} />}
       {tab === "presupuestos" && <PresupuestosTab storeId={viewStoreId} />}
       {tab === "recomendaciones" && <RecomendacionesTab storeId={viewStoreId} onViewBudget={goToPresupuesto} />}
